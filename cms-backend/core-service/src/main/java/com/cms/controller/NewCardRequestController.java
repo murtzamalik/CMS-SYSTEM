@@ -76,11 +76,10 @@ public class NewCardRequestController {
             @RequestParam(required = false) String relationshipNum,
             @RequestParam(required = false) String branchCode,
             @RequestParam(required = false) Integer isProcessed,
-            @RequestParam(required = false) String requestTypeId,
             @RequestParam(defaultValue = "0") Integer page,
             @RequestParam(defaultValue = "20") Integer size) {
         return ResponseEntity.ok(ApiResponse.ok(
-            newCardRequestService.search(relationshipNum, branchCode, isProcessed, requestTypeId, page, size)));
+            newCardRequestService.search(relationshipNum, branchCode, isProcessed, page, size)));
     }
 
     @GetMapping("/{id}")

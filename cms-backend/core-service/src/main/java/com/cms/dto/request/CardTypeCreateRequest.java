@@ -24,8 +24,6 @@ public class CardTypeCreateRequest {
     private Integer expPeriod;
     private String panSequenceName;
     private Integer panSequenceLength;
-    /** Default limit profile for cards of this type (applied on approve/generate). */
-    private Long defaultLimitProfileId;
 
     public String getCardTypeCode() { return cardTypeCode; }
     public void setCardTypeCode(String cardTypeCode) { this.cardTypeCode = cardTypeCode; }
@@ -53,6 +51,4 @@ public class CardTypeCreateRequest {
     public void setPanSequenceName(String panSequenceName) { this.panSequenceName = panSequenceName; }
     public Integer getPanSequenceLength() { return panSequenceLength; }
     public void setPanSequenceLength(Integer panSequenceLength) { this.panSequenceLength = panSequenceLength; }
-    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
-    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
 }

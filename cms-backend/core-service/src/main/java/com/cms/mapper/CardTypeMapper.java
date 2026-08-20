@@ -28,7 +28,6 @@ public class CardTypeMapper {
         r.setExpPeriod(e.getExpPeriod());
         r.setPanSequenceName(e.getPanSequenceName());
         r.setPanSequenceLength(e.getPanSequenceLength());
-        r.setDefaultLimitProfileId(e.getDefaultLimitProfileId());
         r.setCreatedOn(e.getCreatedOn());
         r.setUpdatedOn(e.getUpdatedOn());
         return r;
@@ -56,7 +55,6 @@ public class CardTypeMapper {
         e.setExpPeriod(req.getExpPeriod());
         e.setPanSequenceName(req.getPanSequenceName());
         e.setPanSequenceLength(req.getPanSequenceLength());
-        e.setDefaultLimitProfileId(req.getDefaultLimitProfileId());
         return e;
     }
 }

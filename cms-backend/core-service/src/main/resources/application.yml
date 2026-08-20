@@ -44,7 +44,7 @@ cms:
     hash-salt: "${CMS_CARD_HASH_SALT:cms-pan-salt}"
     encryption-optional: true
     dummy-hsm: true
-    mobile-default-limit-profile: "${CMS_MOBILE_DEFAULT_LIMIT_PROFILE:STD}"  # fallback if card type has no default limit
+    mobile-default-limit-profile: "${CMS_MOBILE_DEFAULT_LIMIT_PROFILE:STD}"
     export:
       output-dir: "./export"
       filename-pattern: "card_export_{date}_{requestId}.txt"

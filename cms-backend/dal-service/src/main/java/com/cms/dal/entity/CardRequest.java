@@ -58,10 +58,6 @@ public class CardRequest {
     @Column(name = "PRIMARY_PAN", length = 50)
     private String primaryPan;
 
-    /** Source card for CHANGE_TYPE / REPLACEMENT; null for normal NEW requests. */
-    @Column(name = "SOURCE_CARD_ID")
-    private Long sourceCardId;
-
     public Long getRequestId() { return requestId; }
     public void setRequestId(Long requestId) { this.requestId = requestId; }
     public String getRelationshipNum() { return relationshipNum; }
@@ -94,6 +90,4 @@ public class CardRequest {
     public void setRequestTypeId(String requestTypeId) { this.requestTypeId = requestTypeId; }
     public String getPrimaryPan() { return primaryPan; }
     public void setPrimaryPan(String primaryPan) { this.primaryPan = primaryPan; }
-    public Long getSourceCardId() { return sourceCardId; }
-    public void setSourceCardId(Long sourceCardId) { this.sourceCardId = sourceCardId; }
 }

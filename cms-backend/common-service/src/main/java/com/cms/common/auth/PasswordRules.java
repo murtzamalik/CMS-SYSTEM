@@ -2,7 +2,7 @@ package com.cms.common.auth;
 
 /**
  * Password strength rules for create / change password.
- * Min 8 characters, at least one uppercase, one lowercase, and one special character.
+ * Min 8 characters, at least one uppercase and one lowercase letter.
  */
 public final class PasswordRules {
 
@@ -24,21 +24,16 @@ public final class PasswordRules {
         }
         boolean hasUpper = false;
         boolean hasLower = false;
-        boolean hasSpecial = false;
         for (int i = 0; i < password.length(); i++) {
             char c = password.charAt(i);
             if (Character.isUpperCase(c)) hasUpper = true;
-            else if (Character.isLowerCase(c)) hasLower = true;
-            else if (!Character.isLetterOrDigit(c) && !Character.isWhitespace(c)) hasSpecial = true;
+            if (Character.isLowerCase(c)) hasLower = true;
         }
         if (!hasUpper) {
             throw new IllegalArgumentException("Password must contain at least one uppercase letter");
         }
         if (!hasLower) {
             throw new IllegalArgumentException("Password must contain at least one lowercase letter");
-        }
-        if (!hasSpecial) {
-            throw new IllegalArgumentException("Password must contain at least one special character");
         }
     }
 }

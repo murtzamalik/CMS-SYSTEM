@@ -25,7 +25,6 @@ public class CardRequestMapper {
         resp.setIsProcessed(r.getIsProcessed());
         resp.setProgressFlag(r.getProgressFlag());
         resp.setRequestTypeId(r.getRequestTypeId());
-        resp.setSourceCardId(r.getSourceCardId());
         resp.setCreatedOn(r.getCreatedOn());
         resp.setCreatedBy(r.getCreatedBy());
         // Relationships removed from CardRequest entity — names not available directly

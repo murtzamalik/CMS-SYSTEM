@@ -21,8 +21,7 @@ public interface NewCardRequestService {
 
     CustomerInfoResponse getCustomerInfo(String relationshipNum);
 
-    PageResponse<CardRequestResponse> search(String relationshipNum, String branchCode, Integer isProcessed,
-                                             String requestTypeId, Integer page, Integer size);
+    PageResponse<CardRequestResponse> search(String relationshipNum, String branchCode, Integer isProcessed, Integer page, Integer size);
 
     CardRequestResponse getById(Long requestId);
 }

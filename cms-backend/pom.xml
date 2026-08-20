@@ -21,6 +21,7 @@
     <modules>
         <module>dal-service</module>
         <module>common-service</module>
+        <module>business-service</module>
         <module>core-service</module>
     </modules>
 
@@ -43,6 +44,11 @@
             <dependency>
                 <groupId>com.cms</groupId>
                 <artifactId>common-service</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.cms</groupId>
+                <artifactId>business-service</artifactId>
                 <version>${project.version}</version>
             </dependency>
             <dependency>

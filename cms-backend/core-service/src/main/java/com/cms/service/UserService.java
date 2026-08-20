@@ -20,8 +20,6 @@ public interface UserService {
 
     UsmUser updateUser(String loginId, String fullName, String password, Boolean isActive, List<String> groupIds);
 
-    void changePassword(String loginId, String currentPassword, String newPassword);
-
     UsmUser getByLoginId(String loginId);
 
     UserResponse getById(Long id);

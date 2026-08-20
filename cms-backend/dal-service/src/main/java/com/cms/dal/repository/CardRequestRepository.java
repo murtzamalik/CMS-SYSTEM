@@ -22,9 +22,6 @@ public interface CardRequestRepository extends JpaRepository<CardRequest, Long> 
 
     List<CardRequest> findByProgressFlag(Integer progressFlag);
 
-    boolean existsBySourceCardIdAndRequestTypeIdAndIsProcessed(
-            Long sourceCardId, String requestTypeId, Integer isProcessed);
-
     long countByProgressFlag(Integer progressFlag);
 
     long countByIsProcessed(Integer isProcessed);
@@ -37,20 +34,6 @@ public interface CardRequestRepository extends JpaRepository<CardRequest, Long> 
     Page<CardRequest> findByBranchCode(String branchCode, Pageable pageable);
 
     Page<CardRequest> findByIsProcessed(Integer isProcessed, Pageable pageable);
-
-    @Query("""
-        SELECT cr FROM CardRequest cr
-        WHERE (:relationshipNum IS NULL OR cr.relationshipNum = :relationshipNum)
-          AND (:branchCode IS NULL OR cr.branchCode = :branchCode)
-          AND (:isProcessed IS NULL OR cr.isProcessed = :isProcessed)
-          AND (:requestTypeId IS NULL OR UPPER(cr.requestTypeId) = UPPER(:requestTypeId))
-        """)
-    Page<CardRequest> search(
-            @Param("relationshipNum") String relationshipNum,
-            @Param("branchCode") String branchCode,
-            @Param("isProcessed") Integer isProcessed,
-            @Param("requestTypeId") String requestTypeId,
-            Pageable pageable);
 
     @Query("SELECT cr FROM CardRequest cr")
     Page<CardRequest> findAllWithDetails(Pageable pageable);

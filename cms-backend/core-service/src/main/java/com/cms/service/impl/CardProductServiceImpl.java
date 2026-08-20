@@ -55,7 +55,6 @@ public class CardProductServiceImpl implements CardProductService {
         CardProduct e = cardProductRepository.findById(id)
             .orElseThrow(() -> new ResourceNotFoundException("CardProduct", String.valueOf(id)));
         if (request.getProductName() != null) e.setProductName(request.getProductName());
-        if (request.getBin() != null) e.setBin(request.getBin());
         if (request.getIsActive() != null) e.setIsActive(Boolean.TRUE.equals(request.getIsActive()) ? 1 : 0);
         e.setUpdatedOn(LocalDateTime.now());
         return cardProductMapper.toResponse(cardProductRepository.save(e));

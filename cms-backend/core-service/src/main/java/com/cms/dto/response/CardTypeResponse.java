@@ -20,9 +20,6 @@ public class CardTypeResponse {
     private Integer panSequenceLength;
     private LocalDateTime createdOn;
     private LocalDateTime updatedOn;
-    private Long defaultLimitProfileId;
-    private String defaultLimitProfileCode;
-    private String defaultLimitProfileName;
 
     public String getCardTypeCode() { return cardTypeCode; }
     public void setCardTypeCode(String cardTypeCode) { this.cardTypeCode = cardTypeCode; }
@@ -56,10 +53,4 @@ public class CardTypeResponse {
     public void setUpdatedOn(LocalDateTime updatedOn) { this.updatedOn = updatedOn; }
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
-    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
-    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
-    public String getDefaultLimitProfileCode() { return defaultLimitProfileCode; }
-    public void setDefaultLimitProfileCode(String defaultLimitProfileCode) { this.defaultLimitProfileCode = defaultLimitProfileCode; }
-    public String getDefaultLimitProfileName() { return defaultLimitProfileName; }
-    public void setDefaultLimitProfileName(String defaultLimitProfileName) { this.defaultLimitProfileName = defaultLimitProfileName; }
 }

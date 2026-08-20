@@ -17,18 +17,13 @@ import com.cms.dto.response.PageResponse;
 import com.cms.exception.BusinessValidationException;
 import com.cms.exception.ResourceNotFoundException;
 import com.cms.mapper.CardRequestMapper;
-import com.cms.service.AccountEligibilityService;
 import com.cms.service.NewCardRequestService;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
-import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Map;
-import java.util.Set;
 
 @Service
 public class NewCardRequestServiceImpl implements NewCardRequestService {
@@ -43,7 +38,6 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
     private final AccountTypeRepository accountTypeRepository;
     private final AccountStatusRepository accountStatusRepository;
     private final BranchRepository branchRepository;
-    private final AccountEligibilityService accountEligibilityService;
 
     public NewCardRequestServiceImpl(CardRequestRepository cardRequestRepository,
                                       CardTypeRepository cardTypeRepository,
@@ -52,8 +46,7 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
                                       AccountRepository accountRepository,
                                       AccountTypeRepository accountTypeRepository,
                                       AccountStatusRepository accountStatusRepository,
-                                      BranchRepository branchRepository,
-                                      AccountEligibilityService accountEligibilityService) {
+                                      BranchRepository branchRepository) {
         this.cardRequestRepository = cardRequestRepository;
         this.cardTypeRepository = cardTypeRepository;
         this.cardProductRepository = cardProductRepository;
@@ -62,7 +55,6 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
         this.accountTypeRepository = accountTypeRepository;
         this.accountStatusRepository = accountStatusRepository;
         this.branchRepository = branchRepository;
-        this.accountEligibilityService = accountEligibilityService;
     }
 
     @Override
@@ -74,7 +66,6 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
             throw new BusinessValidationException("Either productId or productCode is required");
         if (request.getBranchId() == null && (request.getBranchCode() == null || request.getBranchCode().isBlank()))
             throw new BusinessValidationException("Either branchId or branchCode is required");
-        String cardTitle = normalizeCardTitle(request.getCardTitle());
         String accountNum = resolveAccountNum(request, createdBy);
         Long branchId = resolveBranchId(request);
         Long cardTypeId = resolveCardTypeId(request);
@@ -82,19 +73,18 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
         CardRequest cr = new CardRequest();
         cr.setRelationshipNum(request.getRelationshipNum());
         cr.setAccountNum(accountNum);
-        cr.setCardTitle(cardTitle);
+        cr.setCardTitle(request.getCardTitle());
         branchRepository.findById(branchId).ifPresent(b -> cr.setBranchCode(b.getBranchCode()));        cardTypeRepository.findById(cardTypeId).ifPresent(t -> cr.setCardTypeCode(t.getCardTypeCode()));
         cardProductRepository.findById(productId).ifPresent(p -> cr.setProductCode(p.getProductCode()));
         cr.setSupplementaryCount(request.getSupplementaryCount() != null ? request.getSupplementaryCount() : 0);
         cr.setRequestTypeId(resolveRequestTypeId(request));
-        cr.setSourceCardId(request.getSourceCardId());
         cr.setIsProcessed(0);
         cr.setProgressFlag(0);
         cr.setCreatedOn(LocalDateTime.now());
         cr.setCreatedBy(createdBy);
         cr.setUpdatedOn(LocalDateTime.now());
         cr.setUpdatedBy(createdBy);
-        return enrich(cardRequestMapper.toResponse(cardRequestRepository.save(cr)));
+        return cardRequestMapper.toResponse(cardRequestRepository.save(cr));
     }
 
     private Long resolveBranchId(NewCardRequestCreate request) {
@@ -131,11 +121,9 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
                 throw new BusinessValidationException("Either accountTypeId or acctTypeCode is required for new account");
             if (na.getBranchId() == null && (na.getBranchCode() == null || na.getBranchCode().isBlank()))
                 throw new BusinessValidationException("Either branchId or branchCode is required for new account");
-            String acctStatus = na.getAcctStatusCode() != null && !na.getAcctStatusCode().isBlank() ? na.getAcctStatusCode().trim() : DEFAULT_ACCOUNT_STATUS;
-            accountEligibilityService.requireStatusAndTypeAllowLinking(
-                na.getAccountStatusId(), acctStatus, na.getAccountTypeId(), na.getAcctTypeCode());
             Long accountTypeId = na.getAccountTypeId() != null ? accountTypeRepository.findById(na.getAccountTypeId()).orElseThrow(() -> new ResourceNotFoundException("AccountType", String.valueOf(na.getAccountTypeId()))).getId()
                 : accountTypeRepository.findByAcctTypeCode(na.getAcctTypeCode()).orElseThrow(() -> new ResourceNotFoundException("AccountType", na.getAcctTypeCode())).getId();
+            String acctStatus = na.getAcctStatusCode() != null && !na.getAcctStatusCode().isBlank() ? na.getAcctStatusCode().trim() : DEFAULT_ACCOUNT_STATUS;
             Long accountStatusId = na.getAccountStatusId() != null ? accountStatusRepository.findById(na.getAccountStatusId()).orElseThrow(() -> new ResourceNotFoundException("AccountStatus", String.valueOf(na.getAccountStatusId()))).getId()
                 : accountStatusRepository.findByAcctStatusCode(acctStatus).orElseThrow(() -> new ResourceNotFoundException("AccountStatus", acctStatus)).getId();
             Long branchId = na.getBranchId() != null ? branchRepository.findById(na.getBranchId()).orElseThrow(() -> new ResourceNotFoundException("Branch", String.valueOf(na.getBranchId()))).getId()
@@ -162,7 +150,8 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
         String existing = request.getAccountNum();
         if (existing == null || existing.isBlank())
             throw new BusinessValidationException("accountNum is required when not creating a new account");
-        accountEligibilityService.requireEligibleForCardOrLink(existing);
+        if (!accountRepository.findByAccountNum(existing).isPresent())
+            throw new ResourceNotFoundException("Account", existing);
         return existing;
     }
 
@@ -193,12 +182,12 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
 
     @Override
     public List<CardRequestResponse> getCheckerList() {
-        return enrichAll(cardRequestMapper.toResponseList(cardRequestRepository.findByProgressFlag(0)));
+        return cardRequestMapper.toResponseList(cardRequestRepository.findByProgressFlag(0));
     }
 
     @Override
     public List<CardRequestResponse> getMakerList() {
-        return enrichAll(cardRequestMapper.toResponseList(cardRequestRepository.findByIsProcessed(0)));
+        return cardRequestMapper.toResponseList(cardRequestRepository.findByIsProcessed(0));
     }
 
     @Override
@@ -206,7 +195,7 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
     public CardRequestResponse update(Long requestId, NewCardRequestCreate request) {
         CardRequest cr = cardRequestRepository.findById(requestId)
             .orElseThrow(() -> new ResourceNotFoundException("CardRequest", String.valueOf(requestId)));
-        if (request.getCardTitle() != null) cr.setCardTitle(normalizeCardTitle(request.getCardTitle()));
+        if (request.getCardTitle() != null) cr.setCardTitle(request.getCardTitle());
         if (request.getCardTypeId() != null) cardTypeRepository.findById(request.getCardTypeId()).ifPresent(t -> { cr.setCardTypeCode(t.getCardTypeCode()); });
         if (request.getCardTypeCode() != null && request.getCardTypeId() == null) cardTypeRepository.findByCardTypeCode(request.getCardTypeCode()).ifPresent(t -> { cr.setCardTypeCode(t.getCardTypeCode()); });
         if (request.getProductId() != null) cardProductRepository.findById(request.getProductId()).ifPresent(p -> { cr.setProductCode(p.getProductCode()); });
@@ -215,7 +204,7 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
         if (request.getBranchCode() != null && request.getBranchId() == null) branchRepository.findByBranchCode(request.getBranchCode()).ifPresent(b -> { cr.setBranchCode(b.getBranchCode()); });
         if (request.getSupplementaryCount() != null) cr.setSupplementaryCount(request.getSupplementaryCount());
         cr.setUpdatedOn(LocalDateTime.now());
-        return enrich(cardRequestMapper.toResponse(cardRequestRepository.save(cr)));
+        return cardRequestMapper.toResponse(cardRequestRepository.save(cr));
     }
 
     @Override
@@ -226,15 +215,17 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
     }
 
     @Override
-    public PageResponse<CardRequestResponse> search(String relationshipNum, String branchCode, Integer isProcessed,
-                                                    String requestTypeId, Integer page, Integer size) {
+    public PageResponse<CardRequestResponse> search(String relationshipNum, String branchCode, Integer isProcessed, Integer page, Integer size) {
         var pageable = PageRequest.of(page != null ? page : 0, size != null && size > 0 ? size : 20);
-        String rel = blankToNull(relationshipNum);
-        String branch = blankToNull(branchCode);
-        String type = blankToNull(requestTypeId);
-        var pageResult = cardRequestRepository.search(rel, branch, isProcessed, type, pageable);
+        var pageResult = relationshipNum != null && !relationshipNum.isBlank()
+            ? cardRequestRepository.findByRelationshipNum(relationshipNum, pageable)
+            : branchCode != null && !branchCode.isBlank()
+            ? cardRequestRepository.findByBranchCode(branchCode, pageable)
+            : isProcessed != null
+            ? cardRequestRepository.findByIsProcessed(isProcessed, pageable)
+            : cardRequestRepository.findAllWithDetails(pageable);
         PageResponse<CardRequestResponse> pr = new PageResponse<>();
-        pr.setContent(enrichAll(cardRequestMapper.toResponseList(pageResult.getContent())));
+        pr.setContent(cardRequestMapper.toResponseList(pageResult.getContent()));
         pr.setPage(pageResult.getNumber());
         pr.setSize(pageResult.getSize());
         pr.setTotalElements(pageResult.getTotalElements());
@@ -246,72 +237,6 @@ public class NewCardRequestServiceImpl implements NewCardRequestService {
     public CardRequestResponse getById(Long requestId) {
         CardRequest cr = cardRequestRepository.findByRequestIdWithDetails(requestId)
             .orElseThrow(() -> new ResourceNotFoundException("CardRequest", String.valueOf(requestId)));
-        return enrich(cardRequestMapper.toResponse(cr));
-    }
-
-    private String blankToNull(String value) {
-        return value == null || value.isBlank() ? null : value.trim();
-    }
-
-    private CardRequestResponse enrich(CardRequestResponse response) {
-        if (response == null) return null;
-        enrichAll(List.of(response));
-        return response;
-    }
-
-    /** Resolve type / product / branch display names from codes. */
-    private List<CardRequestResponse> enrichAll(List<CardRequestResponse> list) {
-        if (list == null || list.isEmpty()) return list;
-        Set<String> typeCodes = new HashSet<>();
-        Set<String> productCodes = new HashSet<>();
-        Set<String> branchCodes = new HashSet<>();
-        for (CardRequestResponse r : list) {
-            if (r.getCardTypeName() == null && r.getCardTypeCode() != null && !r.getCardTypeCode().isBlank()) {
-                typeCodes.add(r.getCardTypeCode());
-            }
-            if (r.getProductName() == null && r.getProductCode() != null && !r.getProductCode().isBlank()) {
-                productCodes.add(r.getProductCode());
-            }
-            if (r.getBranchName() == null && r.getBranchCode() != null && !r.getBranchCode().isBlank()) {
-                branchCodes.add(r.getBranchCode());
-            }
-        }
-        Map<String, String> typeNames = new HashMap<>();
-        Map<String, String> productNames = new HashMap<>();
-        Map<String, String> branchNames = new HashMap<>();
-        for (String code : typeCodes) {
-            cardTypeRepository.findByCardTypeCode(code).ifPresent(t -> typeNames.put(code, t.getCardTypeName()));
-        }
-        for (String code : productCodes) {
-            cardProductRepository.findByProductCode(code).ifPresent(p -> productNames.put(code, p.getProductName()));
-        }
-        for (String code : branchCodes) {
-            branchRepository.findByBranchCode(code).ifPresent(b -> branchNames.put(code, b.getBranchName()));
-        }
-        for (CardRequestResponse r : list) {
-            if (r.getCardTypeName() == null && r.getCardTypeCode() != null) {
-                r.setCardTypeName(typeNames.get(r.getCardTypeCode()));
-            }
-            if (r.getProductName() == null && r.getProductCode() != null) {
-                r.setProductName(productNames.get(r.getProductCode()));
-            }
-            if (r.getBranchName() == null && r.getBranchCode() != null) {
-                r.setBranchName(branchNames.get(r.getBranchCode()));
-            }
-        }
-        return list;
-    }
-
-    private String normalizeCardTitle(String cardTitle) {
-        if (cardTitle == null || cardTitle.isBlank()) {
-            throw new BusinessValidationException("cardTitle is required");
-        }
-        String trimmed = cardTitle.trim();
-        for (int i = 0; i < trimmed.length(); i++) {
-            if (Character.isLowerCase(trimmed.charAt(i))) {
-                throw new BusinessValidationException("cardTitle must not contain lowercase letters");
-            }
-        }
-        return trimmed.toUpperCase();
+        return cardRequestMapper.toResponse(cr);
     }
 }

@@ -46,7 +46,7 @@ public class CardProductController {
 
     @PutMapping("/{id}")
     @Operation(summary = "Update product")
-    public ResponseEntity<ApiResponse<CardProductResponse>> update(@PathVariable Long id, @Valid @RequestBody CardProductUpdateRequest request) {
+    public ResponseEntity<ApiResponse<CardProductResponse>> update(@PathVariable Long id, @RequestBody CardProductUpdateRequest request) {
         return ResponseEntity.ok(ApiResponse.ok("Product updated successfully", cardProductService.update(id, request)));
     }
 

@@ -2,7 +2,6 @@ package com.cms.dto.request;
 
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Pattern;
 
 public class NewCardRequestCreate {
     @NotBlank(message = "relationshipNum is required")
@@ -12,8 +11,6 @@ public class NewCardRequestCreate {
     /** When present, backend creates the account first then uses its accountNum for the card request. */
     @Valid
     private NewAccountRequest newAccount;
-    @NotBlank(message = "cardTitle is required")
-    @Pattern(regexp = "^[^a-z]*$", message = "cardTitle must not contain lowercase letters")
     private String cardTitle;
     /** Preferred: use cardTypeId. When null, cardTypeCode is used to resolve. */
     private Long cardTypeId;
@@ -25,7 +22,7 @@ public class NewCardRequestCreate {
     private Integer supplementaryCount = 0;
     /**
      * Request type from LOV (e.g. NEW / 1 for mobile new-card).
-     * On approve/generate, limit comes from card type defaultLimitProfileId (fallback STD).
+     * Mobile app should send NEW (or 1 / MOBILE) so portal approve auto-assigns STD limit.
      */
     private String requestTypeId;
     /**
@@ -33,8 +30,6 @@ public class NewCardRequestCreate {
      * so approve/generate applies the standard limit profile.
      */
     private String requestSource;
-    /** Source card id for CHANGE_TYPE / REPLACEMENT flows. */
-    private Long sourceCardId;
 
     public String getRelationshipNum() { return relationshipNum; }
     public void setRelationshipNum(String relationshipNum) { this.relationshipNum = relationshipNum; }
@@ -62,6 +57,4 @@ public class NewCardRequestCreate {
     public void setRequestSource(String requestSource) { this.requestSource = requestSource; }
     public NewAccountRequest getNewAccount() { return newAccount; }
     public void setNewAccount(NewAccountRequest newAccount) { this.newAccount = newAccount; }
-    public Long getSourceCardId() { return sourceCardId; }
-    public void setSourceCardId(Long sourceCardId) { this.sourceCardId = sourceCardId; }
 }

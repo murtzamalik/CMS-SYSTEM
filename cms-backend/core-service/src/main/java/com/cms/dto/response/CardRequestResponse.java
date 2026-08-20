@@ -19,7 +19,6 @@ public class CardRequestResponse {
     private Integer isProcessed;
     private Integer progressFlag;
     private String requestTypeId;
-    private Long sourceCardId;
     private LocalDateTime createdOn;
     private String createdBy;
 
@@ -53,8 +52,6 @@ public class CardRequestResponse {
     public void setProgressFlag(Integer progressFlag) { this.progressFlag = progressFlag; }
     public String getRequestTypeId() { return requestTypeId; }
     public void setRequestTypeId(String requestTypeId) { this.requestTypeId = requestTypeId; }
-    public Long getSourceCardId() { return sourceCardId; }
-    public void setSourceCardId(Long sourceCardId) { this.sourceCardId = sourceCardId; }
     public LocalDateTime getCreatedOn() { return createdOn; }
     public void setCreatedOn(LocalDateTime createdOn) { this.createdOn = createdOn; }
     public String getCreatedBy() { return createdBy; }

@@ -19,9 +19,6 @@ public class CardProduct {
     @Column(name = "PRODUCT_NAME", length = 255)
     private String productName;
 
-    @Column(name = "BIN")
-    private Integer bin;
-
     @Column(name = "CREATED_ON")
     private LocalDateTime createdOn;
 
@@ -41,8 +38,6 @@ public class CardProduct {
     public void setProductCode(String productCode) { this.productCode = productCode; }
     public String getProductName() { return productName; }
     public void setProductName(String productName) { this.productName = productName; }
-    public Integer getBin() { return bin; }
-    public void setBin(Integer bin) { this.bin = bin; }
     public LocalDateTime getCreatedOn() { return createdOn; }
     public void setCreatedOn(LocalDateTime createdOn) { this.createdOn = createdOn; }
     public String getCreatedBy() { return createdBy; }

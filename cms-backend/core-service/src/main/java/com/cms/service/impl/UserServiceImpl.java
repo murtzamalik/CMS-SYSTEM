@@ -213,38 +213,6 @@ public class UserServiceImpl implements com.cms.service.UserService {
     }
 
     @Override
-    @Transactional
-    public void changePassword(String loginId, String currentPassword, String newPassword) {
-        if (loginId == null || loginId.isBlank()) {
-            throw new BusinessValidationException("User is required");
-        }
-        if (currentPassword == null || currentPassword.isBlank()) {
-            throw new BusinessValidationException("Current password is required");
-        }
-        requireStrongPassword(newPassword);
-        if (currentPassword.equals(newPassword)) {
-            throw new BusinessValidationException("New password must be different from current password");
-        }
-
-        UsmUser user = usmUserRepository.findByLoginId(loginId)
-            .or(() -> usmUserRepository.findByLoginIdIgnoreCase(loginId))
-            .orElseThrow(() -> new ResourceNotFoundException("User", loginId));
-
-        String stored = user.getPassword();
-        if (stored == null || !passwordEncoder.matches(currentPassword, stored)) {
-            throw new BusinessValidationException("Current password is incorrect");
-        }
-
-        user.setPassword(passwordEncoder.encode(newPassword));
-        user.setPwdUpdatedOn(LocalDateTime.now());
-        user.setPwdRetryCount(BigDecimal.ZERO);
-        user.setPwdLockedUntil(null);
-        user.setUpdatedOn(LocalDateTime.now());
-        user.setUpdatedBy(loginId);
-        usmUserRepository.save(user);
-    }
-
-    @Override
     public UsmUser getByLoginId(String loginId) {
         return usmUserRepository.findByLoginId(loginId)
             .orElseThrow(() -> new ResourceNotFoundException("User", loginId));

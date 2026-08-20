@@ -15,24 +15,32 @@ Multi-module Spring Boot backend for the Card Management System. Migrated from .
 ```
 card-management-system/
 ├── dal-service/          # JPA entities, Spring Data JPA repositories
-├── common-service/       # Shared security/config utilities (JWT, helpers)
-├── core-service/         # Spring Boot app — REST API, services, auth, Flyway
-├── cms-frontend/         # Next.js Vision Web UI
+├── common-service/       # UnitOfWork, BizProcessConfig, ActivityLogger, PermissionController,
+│                         # DataHelper, ResponseHelper, SecurityConfig (JWT)
+├── business-service/     # 71 Manager @Services implementing IBusinessProcess
+├── core-service/         # CMSCoreProcessor, BizMessageProcessor, state machine, REST API
 └── pom.xml
 ```
 
 ## Architecture Flow
 
 ```
-REST API (core-service controllers)
-  → Application services
-  → Repositories / DataHelper → DAL (JPA / Oracle)
-  → Audit / ActivityLogger
+REST API → CMSCoreProcessor → BizMessageProcessor → AddForAuditLogs → ProcessMessageInternal
+  → ExecuteBizState → BizProcessRegistry.resolve(ClassName) → IBusinessProcess.execute(methodName, …)
+  → Manager service method → Repository / DataHelper → DAL (JPA / Oracle)
+  → AuditContext / ActivityLogger
 ```
 
-- **Core:** REST controllers, application services, auth, Flyway migrations, OpenAPI.
-- **Common:** Shared security/config utilities (JWT, helpers) used by core.
-- **DAL:** JPA entities and Spring Data JPA repositories; parameterized SQL/SP via DataHelper where needed.
+- **Core:** Orchestration, lifecycle (Start/Stop), state machine (ProcessState sequences), dynamic resolution of `IBusinessProcess` by class name from `BIZ_PROCESS_STATES.CLASSNAME`.
+- **Common:** BizProcessConfig (loads BIZ_PROCESS, BIZ_PROCESS_STATES at startup), ActivityLogger, PermissionController, DataHelper (parameterized SQL/SP only), ResponseHelper, SecurityConfig (JWT filter, role-based access).
+- **Business:** 71 Manager classes; each implements `execute(String methodName, IProcessMessage request, IProcessMessage response)` and dispatches to methods (e.g. CreateAccountStatus, UpdateAccountStatus). BLRs, validations, and error handling per ERROR_HANDLING_MATRIX.
+- **DAL:** JPA entities mapped from legacy EF POCOs; Spring Data JPA repositories; no string-interpolated SQL (BLR-DAL-1); raw SQL/SP via DataHelper with named parameters only.
+
+## DI Mapping
+
+- **IBusinessProcess:** All 71 managers are Spring `@Service` beans. `BizProcessRegistry` collects them at startup and registers by `getClass().getSimpleName()` (e.g. "AccountStatusManager"). The state table column `CLASSNAME` in `BIZ_PROCESS_STATES` must match these names.
+- **BizProcessConfig:** Loads process definitions from `BIZ_PROCESS` and `BIZ_PROCESS_STATES`; exposes `getBizProcess(channelId, messageType)`.
+- **UnitOfWork:** Facade for transactional scope; in Spring, use `@Transactional` on service methods and inject repositories directly.
 
 ## Configuration
 
@@ -162,7 +170,7 @@ docker compose -p cms up -d
 
 ## Unit Tests
 
-- Skeleton tests in `core-service` and `common-service` under `src/test/java`. Run with `mvn test` (use `-DskipTests` if DB not configured).
+- Skeleton tests in `core-service`, `common-service`, and `business-service` under `src/test/java`. Run with `mvn test` (use `-DskipTests` if DB not configured).
 - **API integration tests:** `ApiIntegrationTest` in `core-service` (auth and protected endpoints with H2). See **API testing and auth** above.
 
 ## Migration parity

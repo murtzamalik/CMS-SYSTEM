@@ -22,7 +22,7 @@
 | Version | Date | Author | Description |
 |---------|------|--------|-------------|
 | 0.1 | Jul 2026 | CMS Team | Initial draft structure |
-| 1.0 | Jul 2026 | CMS Team | Full TSD — architecture, UI, security, APIs |
+| 1.0 | Jul 2026 | CMS Team | Full TSD — architecture, UI, security, APIs (excl. business-service) |
 
 ### Approvals
 
@@ -125,6 +125,7 @@ It is the single reference for:
 
 | Area | Reason |
 |------|--------|
+| **`business-service` module** | **Not used by this CMS delivery.** Runtime depends on `core-service` → `common-service` → `dal-service` only. Legacy manager/state-machine content from that module is excluded from this TSD. |
 | External card personalization bureau hardware | Client/site-specific |
 | Core banking host internals | Integration boundary only |
 | Network / firewall design | Infrastructure team |
@@ -267,7 +268,7 @@ Exact screen access is controlled by **roles → menus / permissions**.
 | **`common-service`** | Shared security/config utilities used by core |
 | **`dal-service`** | JPA entities and Spring Data repositories |
 
-Runtime dependency chain: `core-service` → `common-service` → `dal-service`.
+> **Note:** `business-service` exists in the repository for legacy migration history but is **not part of the runtime dependency chain for this CMS** (`core-service` depends on `common-service` and `dal-service` only). It is **excluded** from this specification.
 
 ### 4.2 Logical architecture
 
@@ -1129,6 +1130,10 @@ core-service
 common-service
 dal-service
 Oracle 19c
+
+NOT IN SCOPE FOR THIS TSD
+─────────────────────────
+business-service   ← legacy / unused runtime dependency for this project
 ```
 
 ### Appendix C — Quick smoke test script (manual)
@@ -1180,6 +1185,7 @@ DESIGN REQUIREMENTS
    - Center images; max width ~15–16 cm; keep aspect ratio
    - If a screenshot file is missing, insert a grey placeholder box with the expected filename so the author can drop it later
 9. Callout boxes for:
+   - Out-of-scope note about business-service
    - Security notes (PAN masking, encryption)
    - Roadmap items
 10. Footer on every page: “CMS-TSD-001 | Confidential | Page X of Y”

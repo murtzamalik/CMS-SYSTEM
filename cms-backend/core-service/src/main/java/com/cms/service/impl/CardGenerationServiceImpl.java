@@ -3,7 +3,6 @@ package com.cms.service.impl;
 import com.cms.dal.entity.Card;
 import com.cms.dal.entity.CardAccount;
 import com.cms.dal.entity.CardRequest;
-import com.cms.dal.entity.CardType;
 import com.cms.dal.entity.LimitProfile;
 import com.cms.dal.repository.AccountRepository;
 import com.cms.dal.repository.CardAccountRepository;
@@ -13,7 +12,6 @@ import com.cms.dal.repository.CardTypeRepository;
 import com.cms.dal.repository.LimitProfileRepository;
 import com.cms.dto.response.CardGenerationResultResponse;
 import com.cms.dto.response.CardRequestResponse;
-import com.cms.exception.BusinessValidationException;
 import com.cms.exception.ResourceNotFoundException;
 import com.cms.mapper.CardMapper;
 import com.cms.mapper.CardRequestMapper;
@@ -21,7 +19,6 @@ import com.cms.service.CardDataEncryptionService;
 import com.cms.service.CardGenerationService;
 import com.cms.service.CardTrackDataFormatter;
 import com.cms.service.CvvGenerationService;
-import com.cms.service.AccountEligibilityService;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -30,16 +27,21 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
-import java.time.YearMonth;
 import java.util.List;
-import java.util.Random;
+import java.time.YearMonth;
+import java.util.Random; // Modified this code for PAN generation
+import java.util.Comparator;
 import java.util.Optional;
+import java.util.Set;
 
 
 @Service
 public class CardGenerationServiceImpl implements CardGenerationService {
 
     private static final Logger log = LoggerFactory.getLogger(CardGenerationServiceImpl.class);
+
+    /** Mobile app new-card request types (matches LOV NEW / 1 and explicit MOBILE). */
+    private static final Set<String> MOBILE_REQUEST_TYPES = Set.of("NEW", "1", "MOBILE");
 
     private final CardRequestRepository cardRequestRepository;
     private final CardRepository cardRepository;
@@ -52,7 +54,6 @@ public class CardGenerationServiceImpl implements CardGenerationService {
     private final CardTrackDataFormatter cardTrackDataFormatter;
     private final AccountRepository accountRepository;
     private final CardAccountRepository cardAccountRepository;
-    private final AccountEligibilityService accountEligibilityService;
     private final String mobileDefaultLimitProfile;
 
     private static final DateTimeFormatter EXPIRY_YYMM = DateTimeFormatter.ofPattern("yyMM");
@@ -66,7 +67,6 @@ public class CardGenerationServiceImpl implements CardGenerationService {
                                     CardTrackDataFormatter cardTrackDataFormatter,
                                     AccountRepository accountRepository,
                                     CardAccountRepository cardAccountRepository,
-                                    AccountEligibilityService accountEligibilityService,
                                     @Value("${cms.card.mobile-default-limit-profile:STD}") String mobileDefaultLimitProfile) {
         this.cardRequestRepository = cardRequestRepository;
         this.cardRepository = cardRepository;
@@ -79,7 +79,6 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         this.cardTrackDataFormatter = cardTrackDataFormatter;
         this.accountRepository = accountRepository;
         this.cardAccountRepository = cardAccountRepository;
-        this.accountEligibilityService = accountEligibilityService;
         this.mobileDefaultLimitProfile = mobileDefaultLimitProfile;
     }
 
@@ -100,17 +99,10 @@ public class CardGenerationServiceImpl implements CardGenerationService {
             result.setMessage("Request already processed");
             return result;
         }
-        String accountNumForCheck = req.getAccountNum();
-        if (accountNumForCheck != null && !accountNumForCheck.isBlank()) {
-            accountEligibilityService.requireEligibleForCardOrLink(accountNumForCheck);
-        }
-
-        String requestType = req.getRequestTypeId() != null ? req.getRequestTypeId().trim() : "";
-        boolean isChangeTypeOrReplacement = "CHANGE_TYPE".equalsIgnoreCase(requestType)
-                || "REPLACEMENT".equalsIgnoreCase(requestType);
-
-        // Always create a new card row for CHANGE_TYPE / REPLACEMENT (old card stays and becomes Hot).
-        Card card = new Card();
+        boolean isReplacement = "REPLACEMENT".equalsIgnoreCase(req.getRequestTypeId());
+        Optional<Card> replacementTarget = isReplacement ? findReplacementTargetCard(req) : Optional.empty();
+        Card card = replacementTarget.orElseGet(Card::new);
+        String oldPan = resolvePan(card);
         card.setRelationshipNum(req.getRelationshipNum());
         // Modified code for setting title to 19 chars
         String rawTitle = req.getCardTitle() != null ? req.getCardTitle().trim() : "";
@@ -118,8 +110,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setCardTypeCode(req.getCardTypeCode());
         card.setProductCode(req.getProductCode());
         card.setBranchCode(req.getBranchCode());
-        if (!requestType.isBlank()) {
-            card.setRequestType(requestType);
+        if (req.getRequestTypeId() != null && !req.getRequestTypeId().isBlank()) {
+            card.setRequestType(req.getRequestTypeId());
         }
 
         // Modified this code for PAN generation — use cardTypeCode since cardTypeId removed from CardRequest
@@ -133,8 +125,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setTrimPan(panMasked);
         YearMonth expiryMonth = YearMonth.now().plusYears(5);
         card.setExpiryDate(expiryMonth.atEndOfMonth().atTime(23, 59, 59));
-        // CHANGE_TYPE / REPLACEMENT: Warm (002) until activated by call etc. Normal NEW: Cold (001).
-        card.setCardStatusCode(isChangeTypeOrReplacement ? "002" : "001");
+        //card.setExpiryDate(LocalDateTime.now().plusYears(5));
+        card.setCardStatusCode("001");
         card.setCreatedOn(LocalDateTime.now());
         card.setUpdatedOn(LocalDateTime.now());
         card.setCreatedBy("system");
@@ -144,8 +136,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setActivationDate(null);
         card.setCardProdStatusId("001"); // 001 = Issued, card generated not yet exported
 
-        // Assign limit profile: card-type default first, then configured STD fallback
-        applyLimitProfileOnGenerate(req, card);
+        // Mobile app requests approved on portal: auto-assign standard limit profile
+        applyMobileStandardLimitIfNeeded(req, card);
 
         String expiryYyMm = card.getExpiryDate().format(EXPIRY_YYMM);
         CvvGenerationService.CvvResult cvvResult = cvvGenerationService.generate(generatedPan, expiryYyMm);
@@ -159,11 +151,16 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setTrack2Data(encryptionService.encrypt(track2));
 
         Card saved = cardRepository.save(card);
-
-        if (isChangeTypeOrReplacement) {
-            markSourceCardHot(req.getSourceCardId());
+        if (isReplacement && oldPan != null && !oldPan.isBlank() && !oldPan.equals(generatedPan)) {
+            // Keep account links on the same card row aligned with the new masked PAN after replacement.
+            List<CardAccount> links = cardAccountRepository.findByCardId(saved.getCardId());
+            for (CardAccount link : links) {
+                link.setPan(panMasked);
+                link.setUpdatedOn(LocalDateTime.now());
+                link.setUpdatedBy("system");
+            }
+            cardAccountRepository.saveAll(links);
         }
-
         req.setIsProcessed(1);
         req.setProgressFlag(1);
         req.setPrimaryPan(panMasked);
@@ -204,75 +201,32 @@ public class CardGenerationServiceImpl implements CardGenerationService {
     }
 
     /**
-     * After CHANGE_TYPE / REPLACEMENT generation: old source card becomes Hot (003).
+     * When a card request originated from the mobile app (requestTypeId NEW / 1 / MOBILE),
+     * assign the configured standard limit profile if the card does not already have one.
+     * DB column LIMIT_PROFILE is NUMBER — store LimitProfile.id (e.g. 3), not code "STD".
      */
-    private void markSourceCardHot(Long sourceCardId) {
-        if (sourceCardId == null) {
-            log.warn("CHANGE_TYPE/REPLACEMENT request has no sourceCardId; cannot mark old card Hot");
+    private void applyMobileStandardLimitIfNeeded(CardRequest req, Card card) {
+        if (!isMobileCardRequest(req)) {
             return;
         }
-        Card oldCard = cardRepository.findById(sourceCardId)
-            .orElseThrow(() -> new ResourceNotFoundException("Card", String.valueOf(sourceCardId)));
-        oldCard.setCardStatusCode("003");
-        oldCard.setIsReplaced(1);
-        oldCard.setUpdatedOn(LocalDateTime.now());
-        oldCard.setUpdatedBy("system");
-        cardRepository.save(oldCard);
-        log.info("Marked source card {} as Hot (003) after new card generation", sourceCardId);
-    }
-
-    /**
-     * On approve/generate: assign limit profile to the new card (portal or mobile).
-     * <ol>
-     *   <li>Card type {@code DEFAULT_LIMIT_PROFILE_ID} if configured</li>
-     *   <li>Else configured fallback {@code cms.card.mobile-default-limit-profile} (default STD)</li>
-     * </ol>
-     * Skips if the card already has a limit profile.
-     */
-    private void applyLimitProfileOnGenerate(CardRequest req, Card card) {
         if (card.getLimitProfile() != null && !card.getLimitProfile().isBlank()) {
             return;
         }
-        if (card.getLimitProfileId() != null) {
-            return;
-        }
-
-        Optional<LimitProfile> fromCardType = resolveLimitProfileFromCardType(req.getCardTypeCode());
-        if (fromCardType.isPresent()) {
-            assignLimitProfile(card, fromCardType.get(), "card type " + req.getCardTypeCode());
-            return;
-        }
-
         String configured = mobileDefaultLimitProfile != null ? mobileDefaultLimitProfile.trim() : "STD";
         if (configured.isEmpty()) {
-            log.warn("Card request {}: no card-type limit and no fallback profile configured; card generated without limit",
-                req.getRequestId());
             return;
         }
-        Optional<LimitProfile> fallback = resolveLimitProfile(configured);
-        if (fallback.isEmpty()) {
-            log.warn("Card request {}: limit profile '{}' not found; card generated without limit",
+        Optional<LimitProfile> profile = resolveLimitProfile(configured);
+        if (profile.isEmpty()) {
+            log.warn("Mobile card request {}: limit profile '{}' not found; card generated without limit",
                 req.getRequestId(), configured);
             return;
         }
-        assignLimitProfile(card, fallback.get(), "fallback " + configured);
-    }
-
-    private Optional<LimitProfile> resolveLimitProfileFromCardType(String cardTypeCode) {
-        if (cardTypeCode == null || cardTypeCode.isBlank()) {
-            return Optional.empty();
-        }
-        return cardTypeRepository.findByCardTypeCode(cardTypeCode.trim())
-            .map(CardType::getDefaultLimitProfileId)
-            .filter(id -> id != null)
-            .flatMap(limitProfileRepository::findById);
-    }
-
-    private void assignLimitProfile(Card card, LimitProfile lp, String source) {
+        LimitProfile lp = profile.get();
         card.setLimitProfile(String.valueOf(lp.getId()));
         card.setLimitProfileId(lp.getId());
-        log.info("Assigned limit profile id {} (code {}) to card from {}",
-            lp.getId(), lp.getProfileCode(), source);
+        log.info("Assigned limit profile id {} (code {}) to card from mobile request {}",
+            lp.getId(), lp.getProfileCode(), req.getRequestId());
     }
 
     private Optional<LimitProfile> resolveLimitProfile(String configured) {
@@ -282,33 +236,53 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         return limitProfileRepository.findByProfileCode(configured);
     }
 
+    private boolean isMobileCardRequest(CardRequest req) {
+        if (req == null || req.getRequestTypeId() == null || req.getRequestTypeId().isBlank()) {
+            return false;
+        }
+        return MOBILE_REQUEST_TYPES.contains(req.getRequestTypeId().trim().toUpperCase());
+    }
+
+    private Optional<Card> findReplacementTargetCard(CardRequest req) {
+        List<Card> candidates = cardRepository.findByRelationshipNumAndCardStatusCode(req.getRelationshipNum(), "WARM");
+        return candidates.stream()
+            .filter(c -> c.getIsReplaced() != null && c.getIsReplaced() == 1)
+            .filter(c -> req.getAccountNum() == null || req.getAccountNum().isBlank() ||
+                cardAccountRepository.findByCardId(c.getCardId()).stream()
+                    .anyMatch(ca -> req.getAccountNum().equals(ca.getAccountNum())))
+            .max(Comparator.comparing(Card::getUpdatedOn, Comparator.nullsLast(Comparator.naturalOrder())));
+    }
+
+    private String resolvePan(Card card) {
+        if (card == null) return null;
+        if (card.getPanEncrypted() != null && !card.getPanEncrypted().isBlank()) {
+            try {
+                return encryptionService.decrypt(card.getPanEncrypted());
+            } catch (RuntimeException ignore) {
+                // Fall through to legacy plain PAN if encrypted value is not readable.
+            }
+        }
+        // Masked PAN in clear column is not usable as full PAN
+        String pan = card.getPan();
+        if (pan != null && pan.contains("*")) return null;
+        return pan;
+    }
+
+    // Modified this code for PAN generation
     private String generatePan(Long cardTypeId, String cardTypeCode) {
-        CardType cardType;
+        int bin = 900419;
         if (cardTypeId != null) {
-            cardType = cardTypeRepository.findById(cardTypeId)
-                .orElseThrow(() -> new ResourceNotFoundException("CardType", String.valueOf(cardTypeId)));
-        } else if (cardTypeCode != null && !cardTypeCode.isBlank()) {
-            cardType = cardTypeRepository.findByCardTypeCode(cardTypeCode)
-                .orElseThrow(() -> new ResourceNotFoundException("CardType", cardTypeCode));
-        } else {
-            throw new BusinessValidationException("Card type is required for PAN generation");
+            var cardType = cardTypeRepository.findById(cardTypeId).orElse(null);
+            if (cardType != null && cardType.getBin() != null) {
+                bin = cardType.getBin();
+            }
+        } else if (cardTypeCode != null) {
+            var cardType = cardTypeRepository.findByCardTypeCode(cardTypeCode).orElse(null);
+            if (cardType != null && cardType.getBin() != null) {
+                bin = cardType.getBin();
+            }
         }
-
-        if (cardType.getProduct() == null) {
-            throw new BusinessValidationException(
-                "Card type " + cardType.getCardTypeCode() + " is not linked to a product");
-        }
-        Integer bin = cardType.getProduct().getBin();
-        if (bin == null) {
-            throw new BusinessValidationException(
-                "BIN is not configured for product " + cardType.getProduct().getProductCode());
-        }
-        if (bin < 100000 || bin > 999999) {
-            throw new BusinessValidationException(
-                "BIN for product " + cardType.getProduct().getProductCode() + " must be exactly 6 digits");
-        }
-
-        String binStr = String.valueOf(bin);
+        String binStr = String.format("%06d", bin);
         Random random = new Random();
         StringBuilder middle = new StringBuilder();
         for (int i = 0; i < 9; i++) {
@@ -333,6 +307,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         }
         return (10 - (sum % 10)) % 10;
     }
+    // Modified this code for PAN generation
+
     @Override
     @Transactional
     public void updateCardRequestProgress(Long requestId, Integer progressFlag) {

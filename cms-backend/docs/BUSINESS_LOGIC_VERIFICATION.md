@@ -13,7 +13,7 @@ This document cross-references the **Java (Spring Boot) core-service REST API** 
 | **Roles (Groups)** | Search, getById, Create, Update, Delete | Full CRUD (create, findAll, getById, update, delete) | ✅ Covered |
 | **Permissions** | Via Common/security | Create, findAll, getById | ✅ Covered |
 | **Reference data (HouseKeeping)** | Controllers per entity + CommonController GET endpoints | Full CRUD per resource where applicable | ✅ Covered |
-| **Card production / Operations / Switch / Utility / Analytics** | Many controllers | Partially in core-service REST; remaining .NET domains deferred | ⏳ For later phase |
+| **Card production / Operations / Switch / Utility / Analytics** | Many controllers | Not in core-service (business-service modules) | ⏳ For later phase |
 
 ---
 
@@ -161,7 +161,7 @@ Many of these are dropdown/list helpers; Java exposes full CRUD for the main ent
 - **Security (extra):** Password (change/forget), PasswordPolicy, PasswordKey, Checker, UserDashboard
 - **Reports / Analytics:** ReportsController, AnalyticsController
 
-These remaining .NET domain areas are out of scope for the current “reference data + auth + users + roles + permissions” verification.
+These map to **business-service** managers and are out of scope for the current “reference data + auth + users + roles + permissions” verification.
 
 ---
 
@@ -184,6 +184,6 @@ Before starting frontend implementation, you can confirm:
 
 - **Reference data and basic configuration** used by the .NET app for HouseKeeping and Common (dropdowns/lists) are **covered** by the Java REST API with full CRUD and consistent behaviour.
 - **Auth, Users, Roles, and Permissions** are implemented and **Roles** now include update and delete to align with .NET GroupController.
-- **Remaining .NET domain modules** (switch, utility bill extras, analytics, reports, etc.) can be added as REST endpoints in a later phase; they are not required for validating “all business logic and use cases” for the **reference data + security** scope before frontend work.
+- **Domain modules** (card production, operations, switch, utility, analytics, reports) remain in **business-service** and can be exposed as REST or messaging in a later phase; they are not required for validating “all business logic and use cases” for the **reference data + security** scope before frontend work.
 
 You can proceed to **frontend implementation** for login, user/role/permission management, and all reference-data screens using the Java REST API above.

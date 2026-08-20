@@ -27,6 +27,3 @@ Thumbs.db
 
 # Local backups (never commit)
 *.bak
-
-# Release packs (built JARs / zips — never commit)
-releases/

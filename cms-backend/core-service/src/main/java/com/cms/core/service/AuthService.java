@@ -68,8 +68,4 @@ public class AuthService {
         r.setMenus(menuService.getMenusForRoles(roles));
         return Optional.of(r);
     }
-
-    public void changePassword(String loginId, String currentPassword, String newPassword) {
-        userService.changePassword(loginId, currentPassword, newPassword);
-    }
 }

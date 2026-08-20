@@ -15,8 +15,6 @@ public class CardTypeUpdateRequest {
     private Integer expPeriod;
     private String panSequenceName;
     private Integer panSequenceLength;
-    /** Default limit profile for cards of this type (applied on approve/generate). Null clears. */
-    private Long defaultLimitProfileId;
 
     public String getCardTypeName() { return cardTypeName; }
     public void setCardTypeName(String cardTypeName) { this.cardTypeName = cardTypeName; }
@@ -42,6 +40,4 @@ public class CardTypeUpdateRequest {
     public void setPanSequenceName(String panSequenceName) { this.panSequenceName = panSequenceName; }
     public Integer getPanSequenceLength() { return panSequenceLength; }
     public void setPanSequenceLength(Integer panSequenceLength) { this.panSequenceLength = panSequenceLength; }
-    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
-    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
 }

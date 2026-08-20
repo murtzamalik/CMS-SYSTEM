@@ -46,14 +46,6 @@ public class CardType {
     @Column(name = "PRODUCT_ID")
     private Long productId;
 
-    /** Default limit profile applied to new cards of this type on approve/generate. */
-    @Column(name = "DEFAULT_LIMIT_PROFILE_ID")
-    private Long defaultLimitProfileId;
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "DEFAULT_LIMIT_PROFILE_ID", referencedColumnName = "ID", insertable = false, updatable = false)
-    private LimitProfile defaultLimitProfile;
-
     @Column(name = "IS_ACTIVE")
     private Integer isActive;
 
@@ -114,8 +106,4 @@ public class CardType {
     public void setId(Long id) { this.id = id; }
     public Long getProductId() { return productId; }
     public void setProductId(Long productId) { this.productId = productId; }
-    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
-    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
-    public LimitProfile getDefaultLimitProfile() { return defaultLimitProfile; }
-    public void setDefaultLimitProfile(LimitProfile defaultLimitProfile) { this.defaultLimitProfile = defaultLimitProfile; }
 }

@@ -11,7 +11,6 @@ import com.cms.mapper.CardMapper;
 import com.cms.service.CardDataEncryptionService;
 import com.cms.service.CardService;
 import com.cms.service.NewCardRequestService;
-import com.cms.service.AccountEligibilityService;
 import com.cms.spec.CardSpecification;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Sort;
@@ -51,11 +50,9 @@ public class CardServiceImpl implements CardService {
     private final LimitProfileRepository limitProfileRepository;
     private final CardDataEncryptionService encryptionService;
     private final NewCardRequestService newCardRequestService;
-    private final CardRequestRepository cardRequestRepository;
     private final com.cms.service.CardExportFileService cardExportFileService;
     private final CardTrackDataFormatter cardTrackDataFormatter;
     private final CvvGenerationService cvvGenerationService;
-    private final AccountEligibilityService accountEligibilityService;
 
 
     public CardServiceImpl(CardRepository cardRepository, CardAccountRepository cardAccountRepository,
@@ -64,9 +61,7 @@ public class CardServiceImpl implements CardService {
                            AccountRepository accountRepository, CardMapper cardMapper, BranchMapper branchMapper,
                            LimitProfileRepository limitProfileRepository, CardDataEncryptionService encryptionService,
                            NewCardRequestService newCardRequestService,
-                           CardRequestRepository cardRequestRepository,
-                           com.cms.service.CardExportFileService cardExportFileService, CardTrackDataFormatter cardTrackDataFormatter, CvvGenerationService cvvGenerationService,
-                           AccountEligibilityService accountEligibilityService) {
+                           com.cms.service.CardExportFileService cardExportFileService, CardTrackDataFormatter cardTrackDataFormatter, CvvGenerationService cvvGenerationService) {
         this.cardRepository = cardRepository;
         this.cardAccountRepository = cardAccountRepository;
         this.cardStatusRepository = cardStatusRepository;
@@ -79,11 +74,9 @@ public class CardServiceImpl implements CardService {
         this.limitProfileRepository = limitProfileRepository;
         this.encryptionService = encryptionService;
         this.newCardRequestService = newCardRequestService;
-        this.cardRequestRepository = cardRequestRepository;
         this.cardExportFileService = cardExportFileService;
         this.cardTrackDataFormatter = cardTrackDataFormatter;
         this.cvvGenerationService = cvvGenerationService;
-        this.accountEligibilityService = accountEligibilityService;
     }
 
     /**
@@ -238,9 +231,6 @@ public class CardServiceImpl implements CardService {
         List<Account> accounts = accountRepository.findAll();
         List<AccountOptionResponse> out = new ArrayList<>();
         for (Account a : accounts) {
-            if (!accountEligibilityService.isEligibleForCardOrLink(a)) {
-                continue;
-            }
             AccountOptionResponse o = new AccountOptionResponse();
             o.setAccountNum(a.getAccountNum());
             o.setAccountTitle(a.getAccountTitle());
@@ -258,7 +248,6 @@ public class CardServiceImpl implements CardService {
                 .orElseThrow(() -> new ResourceNotFoundException("Card", "PAN"));
         Account account = accountRepository.findByAccountNum(request.getAccountNum())
                 .orElseThrow(() -> new ResourceNotFoundException("Account", request.getAccountNum()));
-        accountEligibilityService.requireEligibleForCardOrLink(account);
         boolean alreadyLinked = cardAccountRepository.findByCardId(card.getCardId()).stream()
                 .anyMatch(ca -> request.getAccountNum().equals(ca.getAccountNum()));
         if (alreadyLinked) {
@@ -516,8 +505,9 @@ public class CardServiceImpl implements CardService {
     public Long changeCardType(Long cardId, ChangeCardTypeRequest request) {
         Card card = cardRepository.findById(cardId)
                 .orElseThrow(() -> new ResourceNotFoundException("Card", String.valueOf(cardId)));
-        assertEligibleForOnceOnlyFlow(card, "CHANGE_TYPE");
-
+        if ("HOT".equalsIgnoreCase(card.getCardStatusCode())) {
+            throw new BusinessValidationException("HOT cards cannot be changed.");
+        }
         CardType cardType = cardTypeRepository.findById(request.getCardTypeId())
                 .orElseThrow(() -> new ResourceNotFoundException("CardType", String.valueOf(request.getCardTypeId())));
         if (cardType.getIsActive() == null || cardType.getIsActive() != 1) {
@@ -548,7 +538,6 @@ public class CardServiceImpl implements CardService {
         newRequest.setProductCode(card.getProductCode());
         newRequest.setBranchCode(card.getBranchCode());
         newRequest.setRequestTypeId("CHANGE_TYPE");
-        newRequest.setSourceCardId(cardId);
 
         card.setUpdatedOn(LocalDateTime.now());
         cardRepository.save(card);
@@ -561,7 +550,6 @@ public class CardServiceImpl implements CardService {
     public Long replacementRequest(Long cardId) {
         Card card = cardRepository.findById(cardId)
                 .orElseThrow(() -> new ResourceNotFoundException("Card", String.valueOf(cardId)));
-        assertEligibleForOnceOnlyFlow(card, "REPLACEMENT");
 
         if (card.getRelationshipNum() == null || card.getRelationshipNum().isBlank()) {
             throw new BusinessValidationException("Card has no relationship number; cannot create replacement request.");
@@ -581,7 +569,8 @@ public class CardServiceImpl implements CardService {
             throw new BusinessValidationException("Card has no branch; cannot create replacement request.");
         }
 
-        // Do not mark old card Hot yet — that happens on approve/generate after the new card is created.
+        card.setCardStatusCode("002");
+        card.setIsReplaced(1);
         card.setUpdatedOn(LocalDateTime.now());
         cardRepository.save(card);
 
@@ -593,37 +582,9 @@ public class CardServiceImpl implements CardService {
         newRequest.setProductCode(card.getProductCode());
         newRequest.setBranchCode(card.getBranchCode());
         newRequest.setRequestTypeId("REPLACEMENT");
-        newRequest.setSourceCardId(cardId);
 
         CardRequestResponse response = newCardRequestService.create(newRequest, "system");
         return response.getRequestId();
-    }
-
-    /**
-     * Change-type and replacement are once-only per source card.
-     * Reject Hot / already-replaced cards and any open request of the same type.
-     */
-    private void assertEligibleForOnceOnlyFlow(Card card, String requestTypeId) {
-        if (isHotStatusCode(card.getCardStatusCode())) {
-            throw new BusinessValidationException("HOT cards cannot be changed or replaced.");
-        }
-        if (card.getIsReplaced() != null && card.getIsReplaced() == 1) {
-            throw new BusinessValidationException("This card has already been replaced.");
-        }
-        String existingType = card.getRequestType();
-        if ("CHANGE_TYPE".equalsIgnoreCase(requestTypeId)
-                && existingType != null && "CHANGE_TYPE".equalsIgnoreCase(existingType.trim())) {
-            throw new BusinessValidationException("Card type can only be changed once for this card.");
-        }
-        if ("REPLACEMENT".equalsIgnoreCase(requestTypeId)
-                && existingType != null && "REPLACEMENT".equalsIgnoreCase(existingType.trim())) {
-            throw new BusinessValidationException("Replacement can only be requested once for this card.");
-        }
-        if (cardRequestRepository.existsBySourceCardIdAndRequestTypeIdAndIsProcessed(
-                card.getCardId(), requestTypeId, 0)) {
-            throw new BusinessValidationException(
-                    "An open " + requestTypeId + " request already exists for this card.");
-        }
     }
 
     @Override
