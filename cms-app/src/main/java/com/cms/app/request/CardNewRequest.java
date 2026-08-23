@@ -12,7 +12,7 @@ public class CardNewRequest {
     private String cardTitle;
 
     @NotBlank
-    @Length(min = 10, max = 10)
+    @Length(min = 11, max = 11)
     private String accountNumber;
 
     @ProductCode
