@@ -511,8 +511,9 @@ public class CardService {
     }
 
     /**
-     * Same as old cms generate-pin / forgotPin:
-     * flag=F → reset existing PIN; otherwise first-time set + status 001.
+     * generate-pin / forgotPin:
+     * flag=F → reset existing PIN (status unchanged);
+     * first-time set PIN only → status 001 (Cold). Change PIN never changes status.
      */
     @Transactional
     public ResponseWrapper<Void> forgotPin(ForgotPin request) {
@@ -558,6 +559,7 @@ public class CardService {
             card.setPinStatus(0);
             card.setPinRetryAvailable(3);
             card.setPinMaxRetry(3);
+            // 001 = Cold — only on first-time Set PIN (mobile activation).
             card.setCardStatusCode("001");
             card.setUpdatedOn(LocalDateTime.now());
             card.setUpdatedBy("API_APP");

@@ -3,9 +3,11 @@ package com.cms.service.impl;
 import com.cms.dal.entity.Card;
 import com.cms.dal.entity.CardAccount;
 import com.cms.dal.entity.CardRequest;
+import com.cms.dal.entity.CardType;
 import com.cms.dal.entity.LimitProfile;
 import com.cms.dal.repository.AccountRepository;
 import com.cms.dal.repository.CardAccountRepository;
+import com.cms.dal.repository.CardProductRepository;
 import com.cms.dal.repository.CardRepository;
 import com.cms.dal.repository.CardRequestRepository;
 import com.cms.dal.repository.CardTypeRepository;
@@ -46,6 +48,7 @@ public class CardGenerationServiceImpl implements CardGenerationService {
     private final CardRequestRepository cardRequestRepository;
     private final CardRepository cardRepository;
     private final CardTypeRepository cardTypeRepository;
+    private final CardProductRepository cardProductRepository;
     private final LimitProfileRepository limitProfileRepository;
     private final CardRequestMapper cardRequestMapper;
     private final CardMapper cardMapper;
@@ -60,6 +63,7 @@ public class CardGenerationServiceImpl implements CardGenerationService {
 
     public CardGenerationServiceImpl(CardRequestRepository cardRequestRepository, CardRepository cardRepository,
                                     CardTypeRepository cardTypeRepository,
+                                    CardProductRepository cardProductRepository,
                                     LimitProfileRepository limitProfileRepository,
                                     CardRequestMapper cardRequestMapper,
                                     CardMapper cardMapper, CardDataEncryptionService encryptionService,
@@ -71,6 +75,7 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         this.cardRequestRepository = cardRequestRepository;
         this.cardRepository = cardRepository;
         this.cardTypeRepository = cardTypeRepository;
+        this.cardProductRepository = cardProductRepository;
         this.limitProfileRepository = limitProfileRepository;
         this.cardRequestMapper = cardRequestMapper;
         this.cardMapper = cardMapper;
@@ -126,7 +131,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         YearMonth expiryMonth = YearMonth.now().plusYears(5);
         card.setExpiryDate(expiryMonth.atEndOfMonth().atTime(23, 59, 59));
         //card.setExpiryDate(LocalDateTime.now().plusYears(5));
-        card.setCardStatusCode("001");
+        // 002 = Warm until customer sets PIN on mobile; 001 Cold is set in cms-app generate-pin (first-time only).
+        card.setCardStatusCode("002");
         card.setCreatedOn(LocalDateTime.now());
         card.setUpdatedOn(LocalDateTime.now());
         card.setCreatedBy("system");
@@ -136,7 +142,8 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setActivationDate(null);
         card.setCardProdStatusId("001"); // 001 = Issued, card generated not yet exported
 
-        // Mobile app requests approved on portal: auto-assign standard limit profile
+        // Mobile app fallback + card-type default limit profile
+        applyDefaultLimitFromCardType(req, card);
         applyMobileStandardLimitIfNeeded(req, card);
 
         String expiryYyMm = card.getExpiryDate().format(EXPIRY_YYMM);
@@ -201,6 +208,35 @@ public class CardGenerationServiceImpl implements CardGenerationService {
     }
 
     /**
+     * Assign limit from card type's defaultLimitProfileId when the card has none yet.
+     */
+    private void applyDefaultLimitFromCardType(CardRequest req, Card card) {
+        if (card.getLimitProfile() != null && !card.getLimitProfile().isBlank()) {
+            return;
+        }
+        CardType cardType = resolveCardType(null, req.getCardTypeCode());
+        if (cardType == null || cardType.getDefaultLimitProfileId() == null) {
+            return;
+        }
+        limitProfileRepository.findById(cardType.getDefaultLimitProfileId()).ifPresent(lp -> {
+            card.setLimitProfile(String.valueOf(lp.getId()));
+            card.setLimitProfileId(lp.getId());
+            log.info("Assigned card-type default limit profile id {} (code {}) for request {}",
+                lp.getId(), lp.getProfileCode(), req.getRequestId());
+        });
+    }
+
+    private CardType resolveCardType(Long cardTypeId, String cardTypeCode) {
+        if (cardTypeId != null) {
+            return cardTypeRepository.findById(cardTypeId).orElse(null);
+        }
+        if (cardTypeCode != null && !cardTypeCode.isBlank()) {
+            return cardTypeRepository.findByCardTypeCode(cardTypeCode).orElse(null);
+        }
+        return null;
+    }
+
+    /**
      * When a card request originated from the mobile app (requestTypeId NEW / 1 / MOBILE),
      * assign the configured standard limit profile if the card does not already have one.
      * DB column LIMIT_PROFILE is NUMBER — store LimitProfile.id (e.g. 3), not code "STD".
@@ -244,7 +280,7 @@ public class CardGenerationServiceImpl implements CardGenerationService {
     }
 
     private Optional<Card> findReplacementTargetCard(CardRequest req) {
-        List<Card> candidates = cardRepository.findByRelationshipNumAndCardStatusCode(req.getRelationshipNum(), "WARM");
+        List<Card> candidates = cardRepository.findByRelationshipNumAndCardStatusCode(req.getRelationshipNum(), "002");
         return candidates.stream()
             .filter(c -> c.getIsReplaced() != null && c.getIsReplaced() == 1)
             .filter(c -> req.getAccountNum() == null || req.getAccountNum().isBlank() ||
@@ -268,17 +304,25 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         return pan;
     }
 
-    // Modified this code for PAN generation
+    // Modified this code for PAN generation — BIN comes from Product (fallback: card type BIN)
     private String generatePan(Long cardTypeId, String cardTypeCode) {
         int bin = 900419;
-        if (cardTypeId != null) {
-            var cardType = cardTypeRepository.findById(cardTypeId).orElse(null);
-            if (cardType != null && cardType.getBin() != null) {
-                bin = cardType.getBin();
+        CardType cardType = resolveCardType(cardTypeId, cardTypeCode);
+        if (cardType != null) {
+            Integer productBin = null;
+            if (cardType.getProductId() != null) {
+                productBin = cardProductRepository.findById(cardType.getProductId())
+                    .map(p -> p.getBin())
+                    .orElse(null);
             }
-        } else if (cardTypeCode != null) {
-            var cardType = cardTypeRepository.findByCardTypeCode(cardTypeCode).orElse(null);
-            if (cardType != null && cardType.getBin() != null) {
+            if (productBin == null && cardType.getProductCode() != null) {
+                productBin = cardProductRepository.findByProductCode(cardType.getProductCode())
+                    .map(p -> p.getBin())
+                    .orElse(null);
+            }
+            if (productBin != null) {
+                bin = productBin;
+            } else if (cardType.getBin() != null) {
                 bin = cardType.getBin();
             }
         }
