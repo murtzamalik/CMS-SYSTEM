@@ -55,6 +55,10 @@ public class CardType {
     @Column(name = "BIN")
     private Integer bin;
 
+    /** Default limit profile applied when a card of this type is generated. */
+    @Column(name = "DEFAULT_LIMIT_PROFILE_ID")
+    private Long defaultLimitProfileId;
+
     @Column(name = "EXP_PERIOD")
     private Integer expPeriod;
 
@@ -94,6 +98,8 @@ public class CardType {
     public void setPanLength(Integer panLength) { this.panLength = panLength; }
     public Integer getBin() { return bin; }
     public void setBin(Integer bin) { this.bin = bin; }
+    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
+    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
     public Integer getExpPeriod() { return expPeriod; }
     public void setExpPeriod(Integer expPeriod) { this.expPeriod = expPeriod; }
     public String getPanSequenceName() { return panSequenceName; }

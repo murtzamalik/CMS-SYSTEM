@@ -18,6 +18,7 @@ public class CardProductMapper {
         r.setProductCode(e.getProductCode());
         r.setProductName(e.getProductName());
         r.setIsActive(e.getIsActive() != null && e.getIsActive() == 1);
+        r.setBin(e.getBin());
         r.setCreatedOn(e.getCreatedOn());
         r.setUpdatedOn(e.getUpdatedOn());
         return r;
@@ -36,6 +37,7 @@ public class CardProductMapper {
         e.setProductCode(req.getProductCode());
         e.setProductName(req.getProductName());
         e.setIsActive(Boolean.TRUE.equals(req.getIsActive()) ? 1 : 0);
+        e.setBin(req.getBin());
         return e;
     }
 }

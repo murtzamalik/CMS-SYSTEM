@@ -34,6 +34,10 @@ public class CardProduct {
     @Column(name = "IS_ACTIVE")
     private Integer isActive;
 
+    /** One BIN per product; used for PAN generation for all card types under this product. */
+    @Column(name = "BIN")
+    private Integer bin;
+
     public String getProductCode() { return productCode; }
     public void setProductCode(String productCode) { this.productCode = productCode; }
     public String getProductName() { return productName; }
@@ -48,6 +52,8 @@ public class CardProduct {
     public void setUpdatedBy(String updatedBy) { this.updatedBy = updatedBy; }
     public Integer getIsActive() { return isActive; }
     public void setIsActive(Integer isActive) { this.isActive = isActive; }
+    public Integer getBin() { return bin; }
+    public void setBin(Integer bin) { this.bin = bin; }
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
 }

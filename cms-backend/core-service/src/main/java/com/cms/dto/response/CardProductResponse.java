@@ -8,6 +8,7 @@ public class CardProductResponse {
     private String productCode;
     private String productName;
     private Boolean isActive;
+    private Integer bin;
     private LocalDateTime createdOn;
     private LocalDateTime updatedOn;
 
@@ -17,6 +18,8 @@ public class CardProductResponse {
     public void setProductName(String productName) { this.productName = productName; }
     public Boolean getIsActive() { return isActive; }
     public void setIsActive(Boolean isActive) { this.isActive = isActive; }
+    public Integer getBin() { return bin; }
+    public void setBin(Integer bin) { this.bin = bin; }
     public LocalDateTime getCreatedOn() { return createdOn; }
     public void setCreatedOn(LocalDateTime createdOn) { this.createdOn = createdOn; }
     public LocalDateTime getUpdatedOn() { return updatedOn; }

@@ -3,6 +3,7 @@ package com.cms.service.impl;
 import com.cms.dal.entity.CardType;
 import com.cms.dal.repository.CardProductRepository;
 import com.cms.dal.repository.CardTypeRepository;
+import com.cms.dal.repository.LimitProfileRepository;
 import com.cms.dto.request.CardTypeCreateRequest;
 import com.cms.dto.request.CardTypeUpdateRequest;
 import com.cms.dto.response.CardTypeResponse;
@@ -21,11 +22,14 @@ public class CardTypeServiceImpl implements CardTypeService {
 
     private final CardTypeRepository cardTypeRepository;
     private final CardProductRepository cardProductRepository;
+    private final LimitProfileRepository limitProfileRepository;
     private final CardTypeMapper cardTypeMapper;
 
-    public CardTypeServiceImpl(CardTypeRepository cardTypeRepository, CardProductRepository cardProductRepository, CardTypeMapper cardTypeMapper) {
+    public CardTypeServiceImpl(CardTypeRepository cardTypeRepository, CardProductRepository cardProductRepository,
+                               LimitProfileRepository limitProfileRepository, CardTypeMapper cardTypeMapper) {
         this.cardTypeRepository = cardTypeRepository;
         this.cardProductRepository = cardProductRepository;
+        this.limitProfileRepository = limitProfileRepository;
         this.cardTypeMapper = cardTypeMapper;
     }
 
@@ -43,6 +47,7 @@ public class CardTypeServiceImpl implements CardTypeService {
         } else {
             throw new com.cms.exception.BusinessValidationException("Either productId or productCode is required");
         }
+        validateLimitProfile(request.getDefaultLimitProfileId());
         CardType e = cardTypeMapper.toEntity(request);
         // Map card type code to numeric before saving
         e.setCardTypeCode(mapCardTypeCode(request.getCardTypeCode()));
@@ -65,6 +70,13 @@ public class CardTypeServiceImpl implements CardTypeService {
             case "TEST" -> "007";
             default -> code;
         };
+    }
+
+    private void validateLimitProfile(Long limitProfileId) {
+        if (limitProfileId == null) return;
+        if (!limitProfileRepository.existsById(limitProfileId)) {
+            throw new ResourceNotFoundException("LimitProfile", String.valueOf(limitProfileId));
+        }
     }
 
     @Override
@@ -98,6 +110,10 @@ public class CardTypeServiceImpl implements CardTypeService {
         if (request.getSuppTypeCode() != null) e.setSuppTypeCode(request.getSuppTypeCode());
         if (request.getPanLength() != null) e.setPanLength(request.getPanLength());
         if (request.getBin() != null) e.setBin(request.getBin());
+        if (request.getDefaultLimitProfileId() != null) {
+            validateLimitProfile(request.getDefaultLimitProfileId());
+            e.setDefaultLimitProfileId(request.getDefaultLimitProfileId());
+        }
         if (request.getExpPeriod() != null) e.setExpPeriod(request.getExpPeriod());
         if (request.getPanSequenceName() != null) e.setPanSequenceName(request.getPanSequenceName());
         if (request.getPanSequenceLength() != null) e.setPanSequenceLength(request.getPanSequenceLength());

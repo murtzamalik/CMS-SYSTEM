@@ -21,6 +21,7 @@ public class CardTypeCreateRequest {
     private String suppTypeCode;
     private Integer panLength;
     private Integer bin;
+    private Long defaultLimitProfileId;
     private Integer expPeriod;
     private String panSequenceName;
     private Integer panSequenceLength;
@@ -45,6 +46,8 @@ public class CardTypeCreateRequest {
     public void setPanLength(Integer panLength) { this.panLength = panLength; }
     public Integer getBin() { return bin; }
     public void setBin(Integer bin) { this.bin = bin; }
+    public Long getDefaultLimitProfileId() { return defaultLimitProfileId; }
+    public void setDefaultLimitProfileId(Long defaultLimitProfileId) { this.defaultLimitProfileId = defaultLimitProfileId; }
     public Integer getExpPeriod() { return expPeriod; }
     public void setExpPeriod(Integer expPeriod) { this.expPeriod = expPeriod; }
     public String getPanSequenceName() { return panSequenceName; }

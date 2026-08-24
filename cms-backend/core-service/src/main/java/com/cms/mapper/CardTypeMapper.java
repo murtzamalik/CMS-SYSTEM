@@ -1,6 +1,7 @@
 package com.cms.mapper;
 
 import com.cms.dal.entity.CardType;
+import com.cms.dal.repository.LimitProfileRepository;
 import com.cms.dto.request.CardTypeCreateRequest;
 import com.cms.dto.response.CardTypeResponse;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,12 @@ import java.util.List;
 
 @Component
 public class CardTypeMapper {
+
+    private final LimitProfileRepository limitProfileRepository;
+
+    public CardTypeMapper(LimitProfileRepository limitProfileRepository) {
+        this.limitProfileRepository = limitProfileRepository;
+    }
 
     public CardTypeResponse toResponse(CardType e) {
         if (e == null) return null;
@@ -25,6 +32,11 @@ public class CardTypeMapper {
         r.setSuppTypeCode(e.getSuppTypeCode());
         r.setPanLength(e.getPanLength());
         r.setBin(e.getBin());
+        r.setDefaultLimitProfileId(e.getDefaultLimitProfileId());
+        if (e.getDefaultLimitProfileId() != null) {
+            limitProfileRepository.findById(e.getDefaultLimitProfileId())
+                .ifPresent(lp -> r.setDefaultLimitProfileCode(lp.getProfileCode()));
+        }
         r.setExpPeriod(e.getExpPeriod());
         r.setPanSequenceName(e.getPanSequenceName());
         r.setPanSequenceLength(e.getPanSequenceLength());
@@ -52,6 +64,7 @@ public class CardTypeMapper {
         e.setSuppTypeCode(req.getSuppTypeCode());
         e.setPanLength(req.getPanLength());
         e.setBin(req.getBin());
+        e.setDefaultLimitProfileId(req.getDefaultLimitProfileId());
         e.setExpPeriod(req.getExpPeriod());
         e.setPanSequenceName(req.getPanSequenceName());
         e.setPanSequenceLength(req.getPanSequenceLength());
