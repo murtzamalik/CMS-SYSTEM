@@ -84,6 +84,7 @@ public class CardService {
     private final CardLimitActualRepository cardLimitActualRepository;
     private final CardLimitCustomizedRepository cardLimitCustomizedRepository;
     private final AESencryption aesEncryption;
+    private final CardDataEncryptionService cardDataEncryption;
 
     public CardService(CardRepository cardRepository,
                        CardRequestRepository cardRequestRepository,
@@ -99,7 +100,8 @@ public class CardService {
                        CardSpendingSummaryRepository cardSpendingSummaryRepository,
                        CardLimitActualRepository cardLimitActualRepository,
                        CardLimitCustomizedRepository cardLimitCustomizedRepository,
-                       AESencryption aesEncryption) {
+                       AESencryption aesEncryption,
+                       CardDataEncryptionService cardDataEncryption) {
         this.cardRepository = cardRepository;
         this.cardRequestRepository = cardRequestRepository;
         this.accountRepository = accountRepository;
@@ -115,6 +117,7 @@ public class CardService {
         this.cardLimitActualRepository = cardLimitActualRepository;
         this.cardLimitCustomizedRepository = cardLimitCustomizedRepository;
         this.aesEncryption = aesEncryption;
+        this.cardDataEncryption = cardDataEncryption;
     }
 
     public ResponseWrapper<CardInquiryResponse> inquiry(CardInquiryRequest request) {
@@ -130,13 +133,77 @@ public class CardService {
             return response;
         }
 
-        Optional<Card> card = cardRepository.findFirstByRelationshipNumOrderByCreatedOnDesc(request.getRelationshipNum());
-        if (card.isPresent()) {
-            response.setResponseCode(ResponseCode.SUCCESS);
-            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
-            response.setResponseBody(toInquiryResponse(card.get()));
+        Optional<Card> cardOpt = cardRepository.findFirstByRelationshipNumOrderByCreatedOnDesc(request.getRelationshipNum());
+        if (cardOpt.isEmpty()) {
+            return response;
         }
+
+        Card card = cardOpt.get();
+        String pin = request.getPin();
+        boolean unmask = pin != null && !pin.isBlank();
+
+        // Optional PIN: verify before unmasking. No PIN → existing response unchanged.
+        if (unmask) {
+            if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
+                response.setResponseCode(ResponseCode.PIN_NOT_AVAILABLE);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_NOT_AVAILABLE));
+                return response;
+            }
+            if (!pinsMatchFlexible(card.getPinOffset(), pin)) {
+                response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
+                return response;
+            }
+        }
+
+        CardInquiryResponse body = toInquiryResponse(card);
+        if (unmask) {
+            applyUnmaskedSensitiveFields(card, body);
+        }
+
+        response.setResponseCode(ResponseCode.SUCCESS);
+        response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
+        response.setResponseBody(body);
         return response;
+    }
+
+    /** Overwrite PAN/CVV with decrypted clear values after successful MPIN check. */
+    private void applyUnmaskedSensitiveFields(Card card, CardInquiryResponse body) {
+        String fullPan = resolveFullPan(card);
+        if (fullPan != null && !fullPan.isBlank()) {
+            body.setPan(fullPan);
+        }
+        try {
+            String cvv = cardDataEncryption.decryptSensitiveField(card.getCvv());
+            if (cvv != null) {
+                body.setCvv(cvv);
+            }
+        } catch (RuntimeException ignore) {
+            // Keep value from toInquiryResponse (legacy decodeMaybe).
+        }
+        try {
+            String cvv2 = cardDataEncryption.decryptSensitiveField(card.getCvv2());
+            if (cvv2 != null) {
+                body.setCvv2(cvv2);
+            }
+        } catch (RuntimeException ignore) {
+            // Keep value from toInquiryResponse.
+        }
+    }
+
+    private String resolveFullPan(Card card) {
+        if (card.getPanEncrypted() != null && !card.getPanEncrypted().isBlank()) {
+            try {
+                return cardDataEncryption.decrypt(card.getPanEncrypted());
+            } catch (RuntimeException ignore) {
+                // Fall through.
+            }
+        }
+        String pan = card.getPan();
+        if (pan != null && pan.contains("*")) {
+            return null;
+        }
+        return pan;
     }
 
     private CardInquiryResponse toInquiryResponse(Card card) {
