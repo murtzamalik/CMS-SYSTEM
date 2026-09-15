@@ -26,6 +26,8 @@ public final class ResponseCode {
     public static final int PIN_ALREADY_SET = 21;
     public static final int INVALID_AMOUNT = 22;
     public static final int PIN_REQUIRED = 23;
+    /** PIN OK but PAN/CVV could not be decrypted (missing ciphertext or wrong CARD_ENCRYPTION_KEY). */
+    public static final int UNMASK_FAILED = 24;
 
     private static final Map<Integer, String> MESSAGE = new HashMap<>();
 
@@ -51,6 +53,7 @@ public final class ResponseCode {
         MESSAGE.put(PIN_ALREADY_SET, "PIN already set. Use Change PIN or Forgot PIN");
         MESSAGE.put(INVALID_AMOUNT, "Invalid transaction amount");
         MESSAGE.put(PIN_REQUIRED, "PIN is required");
+        MESSAGE.put(UNMASK_FAILED, "Unable to unmask card data. Check encryption key / PAN_ENCRYPTED");
     }
 
     private ResponseCode() {

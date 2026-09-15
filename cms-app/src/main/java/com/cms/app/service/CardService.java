@@ -142,7 +142,7 @@ public class CardService {
         String pin = request.getPin();
         boolean unmask = pin != null && !pin.isBlank();
 
-        // Optional PIN: verify before unmasking. No PIN → existing response unchanged.
+        // Optional PIN: verify before unmasking. No PIN → masked only (no CVV).
         if (unmask) {
             if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
                 response.setResponseCode(ResponseCode.PIN_NOT_AVAILABLE);
@@ -158,7 +158,12 @@ public class CardService {
 
         CardInquiryResponse body = toInquiryResponse(card);
         if (unmask) {
-            applyUnmaskedSensitiveFields(card, body);
+            if (!applyUnmaskedSensitiveFields(card, body)) {
+                response.setResponseCode(ResponseCode.UNMASK_FAILED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.UNMASK_FAILED));
+                response.setResponseBody(body); // still masked, cvv null
+                return response;
+            }
         }
 
         response.setResponseCode(ResponseCode.SUCCESS);
@@ -167,53 +172,59 @@ public class CardService {
         return response;
     }
 
-    /** Overwrite PAN/CVV with decrypted clear values after successful MPIN check. */
-    private void applyUnmaskedSensitiveFields(Card card, CardInquiryResponse body) {
+    /**
+     * After successful MPIN: set full PAN + clear CVV/CVV2.
+     * @return false if clear PAN could not be resolved (do not treat masked PAN as success).
+     */
+    private boolean applyUnmaskedSensitiveFields(Card card, CardInquiryResponse body) {
         String fullPan = resolveFullPan(card);
-        if (fullPan != null && !fullPan.isBlank()) {
-            body.setPan(fullPan);
+        if (!CardDataEncryptionService.isClearPan(fullPan)) {
+            return false;
         }
+        body.setPan(fullPan.replaceAll("\\D", ""));
+
         try {
             String cvv = cardDataEncryption.decryptSensitiveField(card.getCvv());
-            if (cvv != null) {
-                body.setCvv(cvv);
-            }
+            body.setCvv(isClearCvv(cvv) ? cvv.trim() : null);
         } catch (RuntimeException ignore) {
-            // Keep value from toInquiryResponse (legacy decodeMaybe).
+            body.setCvv(null);
         }
         try {
             String cvv2 = cardDataEncryption.decryptSensitiveField(card.getCvv2());
-            if (cvv2 != null) {
-                body.setCvv2(cvv2);
-            }
+            body.setCvv2(isClearCvv(cvv2) ? cvv2.trim() : null);
         } catch (RuntimeException ignore) {
-            // Keep value from toInquiryResponse.
+            body.setCvv2(null);
         }
+        return true;
     }
 
     private String resolveFullPan(Card card) {
         if (card.getPanEncrypted() != null && !card.getPanEncrypted().isBlank()) {
             try {
-                return cardDataEncryption.decrypt(card.getPanEncrypted());
+                String decrypted = cardDataEncryption.decrypt(card.getPanEncrypted());
+                if (CardDataEncryptionService.isClearPan(decrypted)) {
+                    return decrypted;
+                }
             } catch (RuntimeException ignore) {
-                // Fall through.
+                // Fall through to PAN column only if it is clear (legacy rows).
             }
         }
         String pan = card.getPan();
-        if (pan != null && pan.contains("*")) {
-            return null;
+        if (CardDataEncryptionService.isClearPan(pan)) {
+            return pan;
         }
-        return pan;
+        return null;
     }
 
+    /** Masked inquiry body: masked PAN, never CVV ciphertext. */
     private CardInquiryResponse toInquiryResponse(Card card) {
         CardInquiryResponse body = new CardInquiryResponse();
         body.setCardTitle(card.getCardTitle());
-        body.setPan(card.getPan());
+        body.setPan(cardDataEncryption.maskPan(card.getPan()));
         body.setCreatedOn(card.getCreatedOn());
         body.setExpiryDate(card.getExpiryDate());
-        body.setCvv(decodeMaybe(card.getCvv()));
-        body.setCvv2(decodeMaybe(card.getCvv2()));
+        body.setCvv(null);
+        body.setCvv2(null);
 
         if (card.getCardStatusCode() != null) {
             cardStatusRepository.findByCardStatusCode(card.getCardStatusCode())
@@ -232,6 +243,14 @@ public class CardService {
         }
         body.setPinSet(card.getPinOffset() != null && !card.getPinOffset().isBlank());
         return body;
+    }
+
+    private static boolean isClearCvv(String cvv) {
+        if (cvv == null || cvv.isBlank()) {
+            return false;
+        }
+        String t = cvv.trim();
+        return t.matches("\\d{3,4}");
     }
 
     private String decodeMaybe(String value) {

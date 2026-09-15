@@ -100,4 +100,40 @@ public class CardDataEncryptionService {
             }
         }
     }
+
+    /** Mask PAN for display: first 6 + stars + last 4. */
+    public String maskPan(String pan) {
+        if (pan == null || pan.isBlank()) {
+            return "****";
+        }
+        if (looksMasked(pan)) {
+            return pan;
+        }
+        String digits = pan.replaceAll("\\D", "");
+        if (digits.length() <= 10) {
+            return "****";
+        }
+        return digits.substring(0, 6)
+                + "*".repeat(digits.length() - 10)
+                + digits.substring(digits.length() - 4);
+    }
+
+    public static boolean looksMasked(String pan) {
+        if (pan == null || pan.isBlank()) {
+            return true;
+        }
+        return pan.indexOf('*') >= 0
+                || pan.indexOf('•') >= 0
+                || pan.indexOf('·') >= 0
+                || pan.contains("...");
+    }
+
+    /** True when value looks like a clear PAN (12–19 digits). */
+    public static boolean isClearPan(String pan) {
+        if (pan == null || pan.isBlank() || looksMasked(pan)) {
+            return false;
+        }
+        String digits = pan.replaceAll("\\D", "");
+        return digits.length() >= 12 && digits.length() <= 19;
+    }
 }
