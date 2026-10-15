@@ -34,6 +34,8 @@ export function PinScreen() {
   const [oldPin, setOldPin] = useState('');
   const [pin, setPin] = useState('');
   const [confirmPin, setConfirmPin] = useState('');
+  /** LasPay OTP proof — required for forgot (flag=F). */
+  const [otpProof, setOtpProof] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
@@ -74,6 +76,10 @@ export function PinScreen() {
       setError('PIN and confirm PIN do not match.');
       return;
     }
+    if (mode === 'forgot' && otpProof.trim().length < 8) {
+      setError('OTP proof from LasPay is required to reset PIN (min 8 characters).');
+      return;
+    }
     setLoading(true);
     try {
       if (mode === 'change') {
@@ -91,6 +97,7 @@ export function PinScreen() {
           pin,
           confirmPin,
           flag: mode === 'forgot' ? 'F' : undefined,
+          ...(mode === 'forgot' ? { otpProof: otpProof.trim() } : {}),
         });
       }
       setSuccess(
@@ -103,6 +110,7 @@ export function PinScreen() {
       setOldPin('');
       setPin('');
       setConfirmPin('');
+      setOtpProof('');
 
       markPinSet(pan.trim());
       const ctx = getCardContext();
@@ -183,6 +191,17 @@ export function PinScreen() {
               value={oldPin}
               onChange={(e) => setOldPin(e.target.value.replace(/\D/g, ''))}
               required
+            />
+          </Field>
+        ) : null}
+        {mode === 'forgot' ? (
+          <Field label="OTP proof (from LasPay after OTP)">
+            <input
+              value={otpProof}
+              onChange={(e) => setOtpProof(e.target.value)}
+              required
+              minLength={8}
+              placeholder="otpRef or signed payload.signature"
             />
           </Field>
         ) : null}

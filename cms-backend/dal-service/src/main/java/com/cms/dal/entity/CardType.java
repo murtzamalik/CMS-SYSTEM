@@ -57,6 +57,10 @@ public class CardType {
     @Column(name = "IS_ACTIVE")
     private Integer isActive;
 
+    /** 1 = virtual (app-only, no PIN, no bureau/print). */
+    @Column(name = "IS_VIRTUAL")
+    private Integer isVirtual;
+
     @Column(name = "PAN_LENGTH")
     private Integer panLength;
 
@@ -98,6 +102,9 @@ public class CardType {
     public void setProductCode(String productCode) { this.productCode = productCode; }
     public Integer getIsActive() { return isActive; }
     public void setIsActive(Integer isActive) { this.isActive = isActive; }
+    public Integer getIsVirtual() { return isVirtual; }
+    public void setIsVirtual(Integer isVirtual) { this.isVirtual = isVirtual; }
+    public boolean isVirtualCard() { return isVirtual != null && isVirtual == 1; }
     public Integer getPanLength() { return panLength; }
     public void setPanLength(Integer panLength) { this.panLength = panLength; }
     public Integer getBin() { return bin; }

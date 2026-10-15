@@ -9,9 +9,14 @@ import java.util.Optional;
 public interface CardRepository extends JpaRepository<Card, Long> {
     Optional<Card> findByPan(String pan);
 
+    Optional<Card> findByPanHash(String panHash);
+
     List<Card> findByRelationshipNumOrderByCreatedOnDesc(String relationshipNum);
 
     Optional<Card> findFirstByRelationshipNumOrderByCreatedOnDesc(String relationshipNum);
+
+    Optional<Card> findFirstByRelationshipNumAndCardTypeCodeOrderByCreatedOnDesc(
+            String relationshipNum, String cardTypeCode);
 
     Optional<Card> findByRelationshipNumAndPan(String relationshipNum, String pan);
 }

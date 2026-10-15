@@ -9,4 +9,6 @@ public class AuthRequest {
     private String username;
     @NotBlank
     private String password;
+    /** Bound into the JWT so card APIs can verify ownership. */
+    private String relationshipNum;
 }

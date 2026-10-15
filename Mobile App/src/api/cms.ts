@@ -4,26 +4,45 @@ import type {
   CardLimitValidateResponse,
   CardLovResponse,
   CardSpendingSummaryResponse,
+  CardStatementResponse,
+  CardTransactionHistoryResponse,
   LoginResponse,
 } from '../types/cms';
 import { apiGet, apiPost, unwrap } from './client';
 
-export async function login(username: string, password: string) {
-  const res = await apiPost<LoginResponse>('/user/login', { username, password });
+export async function login(
+  username: string,
+  password: string,
+  relationshipNum?: string,
+) {
+  const res = await apiPost<LoginResponse>('/user/login', {
+    username,
+    password,
+    ...(relationshipNum ? { relationshipNum } : {}),
+  });
   return unwrap(res)!;
 }
 
-export async function cardInquiry(relationshipNum: string) {
-  const res = await apiPost<CardInquiryResponse>('/card/inquiry', {
+export async function cardInquiry(
+  relationshipNum: string,
+  cardType?: string,
+  /** Plain PIN — encrypted before send. Reveals CVV for physical cards. */
+  pin?: string,
+) {
+  const res = await apiPost<CardInquiryResponse[]>('/card/inquiry', {
     relationshipNum,
+    ...(cardType ? { cardType } : {}),
+    ...(pin ? { pin: encryptPin(pin) } : {}),
   });
   if (res.responseCode === 13 || res.responseCode === 3) {
-    return { code: res.responseCode, message: res.responseMessage, card: null };
+    return { code: res.responseCode, message: res.responseMessage, cards: [] as CardInquiryResponse[] };
   }
   if (res.responseCode !== 0) {
     throw Object.assign(new Error(res.responseMessage), { code: res.responseCode });
   }
-  return { code: 0, message: res.responseMessage, card: res.responseBody };
+  const body = res.responseBody;
+  const cards = Array.isArray(body) ? body : [];
+  return { code: 0, message: res.responseMessage, cards };
 }
 
 export async function getLovs() {
@@ -36,7 +55,7 @@ export async function newCardRequest(payload: {
   accountNumber: string;
   productCode: string;
   cardType: string;
-  relationshipNumber: string;
+  relationshipNum: string;
   requestTypeId: string;
 }) {
   const res = await apiPost<null>('/card/new-request', payload);
@@ -54,6 +73,8 @@ export async function generatePin(payload: {
   pin: string;
   confirmPin: string;
   flag?: string;
+  /** Required when flag=F — from LasPay after OTP. */
+  otpProof?: string;
 }) {
   const res = await apiPost<null>('/card/generate-pin', {
     ...payload,
@@ -127,6 +148,34 @@ export async function spendingSummary(payload: {
     return [];
   }
   return unwrap(res) || [];
+}
+
+export async function transactionHistory(payload: {
+  relationshipNum?: string;
+  pan?: string;
+  channelCode?: number;
+  fromDate?: string;
+  toDate?: string;
+  page?: number;
+  size?: number;
+}) {
+  const res = await apiPost<CardTransactionHistoryResponse>(
+    '/card/transaction/history',
+    payload,
+  );
+  return unwrap(res)!;
+}
+
+export async function cardStatement(payload: {
+  relationshipNum?: string;
+  pan?: string;
+  channelCode?: number;
+  month?: string;
+  fromDate?: string;
+  toDate?: string;
+}) {
+  const res = await apiPost<CardStatementResponse>('/card/statement', payload);
+  return unwrap(res)!;
 }
 
 export function lovMap(

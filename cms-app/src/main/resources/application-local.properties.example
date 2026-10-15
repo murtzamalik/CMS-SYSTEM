@@ -1,0 +1,20 @@
+# Copy this file to application-local.properties and fill the values from APS.
+# Do not commit application-local.properties.
+#
+# awk.acq and awk.isr are both PVKs for PIN-block encryption.
+# component1..3 are XOR-combined into the ZMK. The ZMK is not used on each sale.
+# pinblock.side=issuer means an incoming PIN block is opened with awk.isr.
+
+network.key.awk.acq.hex=
+network.key.awk.isr.hex=
+network.key.component1.hex=
+network.key.component2.hex=
+network.key.component3.hex=
+network.key.pinblock.side=issuer
+
+# Optional local bootstrap (also set via env CMS_APP_API_KEYS / CMS_APP_CORS_ALLOWED_ORIGINS)
+# cms.app.api-keys=your-uat-api-key
+# cms.app.cors.allowed-origins=http://localhost:5173,http://localhost:3000
+# cms.app.jwt.secret=change-me-to-a-long-random-secret-32chars
+# Shared with LasPay for forgot-PIN otpProof HMAC (payload.signature)
+# cms.app.otp-proof.secret=shared-otp-proof-hmac-secret

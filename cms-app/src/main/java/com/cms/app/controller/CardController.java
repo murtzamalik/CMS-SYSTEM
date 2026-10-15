@@ -7,6 +7,8 @@ import com.cms.app.request.CardInquiryRequest;
 import com.cms.app.request.CardLimitValidateRequest;
 import com.cms.app.request.CardNewRequest;
 import com.cms.app.request.CardSpendingSummaryRequest;
+import com.cms.app.request.CardStatementRequest;
+import com.cms.app.request.CardTransactionHistoryRequest;
 import com.cms.app.request.CardUpdateStatusRequest;
 import com.cms.app.request.CardValidationRequest;
 import com.cms.app.request.ChangePinRequest;
@@ -16,6 +18,8 @@ import com.cms.app.response.CardInquiryResponse;
 import com.cms.app.response.CardLimitValidateResponse;
 import com.cms.app.response.CardLovResponse;
 import com.cms.app.response.CardSpendingSummaryResponse;
+import com.cms.app.response.CardStatementResponse;
+import com.cms.app.response.CardTransactionHistoryResponse;
 import com.cms.app.response.ResponseWrapper;
 import com.cms.app.service.CardService;
 import jakarta.validation.Valid;
@@ -42,7 +46,7 @@ public class CardController {
     }
 
     @PostMapping("/inquiry")
-    public @ResponseBody ResponseWrapper<CardInquiryResponse> inquiry(@RequestBody CardInquiryRequest request) {
+    public @ResponseBody ResponseWrapper<List<CardInquiryResponse>> inquiry(@RequestBody CardInquiryRequest request) {
         return cardService.inquiry(request);
     }
 
@@ -91,7 +95,7 @@ public class CardController {
 
     /**
      * Authorize + deduct daily limit for a channel.
-     * Postman test body: pan, pin, channelCode (1/2/3), amount; optional expiryDate, tranCode.
+     * Postman: pan, amount, channelCode (1/2/3), and either pin (app AES) or pinBlock (APS).
      */
     @PostMapping("/transaction/authorize")
     public @ResponseBody ResponseWrapper<CardAuthorizeResponse> authorizeTransaction(
@@ -103,5 +107,24 @@ public class CardController {
     public @ResponseBody ResponseWrapper<List<CardSpendingSummaryResponse>> spendingSummary(
             @RequestBody CardSpendingSummaryRequest request) {
         return cardService.spendingSummary(request);
+    }
+
+    /**
+     * Paginated authorize journal for a relationship and/or PAN.
+     * Requires API key + user JWT (not APS authorize path).
+     */
+    @PostMapping("/transaction/history")
+    public @ResponseBody ResponseWrapper<CardTransactionHistoryResponse> transactionHistory(
+            @RequestBody CardTransactionHistoryRequest request) {
+        return cardService.transactionHistory(request);
+    }
+
+    /**
+     * Month or date-range statement with totals + transactions.
+     */
+    @PostMapping("/statement")
+    public @ResponseBody ResponseWrapper<CardStatementResponse> statement(
+            @RequestBody CardStatementRequest request) {
+        return cardService.statement(request);
     }
 }

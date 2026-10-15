@@ -7,6 +7,8 @@ public class CardTypeUpdateRequest {
     private Long productId;
     private String productCode;
     private Boolean isActive;
+    /** true = virtual (app-only, no PIN, no bureau print). */
+    private Boolean isVirtual;
     private Long supplementaryAllowed;
     private Integer isSuppType;
     private String suppTypeCode;
@@ -26,6 +28,8 @@ public class CardTypeUpdateRequest {
     public void setProductCode(String productCode) { this.productCode = productCode; }
     public Boolean getIsActive() { return isActive; }
     public void setIsActive(Boolean isActive) { this.isActive = isActive; }
+    public Boolean getIsVirtual() { return isVirtual; }
+    public void setIsVirtual(Boolean isVirtual) { this.isVirtual = isVirtual; }
     public Long getSupplementaryAllowed() { return supplementaryAllowed; }
     public void setSupplementaryAllowed(Long supplementaryAllowed) { this.supplementaryAllowed = supplementaryAllowed; }
     public Integer getIsSuppType() { return isSuppType; }

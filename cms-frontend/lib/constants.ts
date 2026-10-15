@@ -5,10 +5,12 @@
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8080';
 /** cms-app (mobile API). Override with NEXT_PUBLIC_CMS_APP_URL on the client server. */
 const CMS_APP_BASE_URL = process.env.NEXT_PUBLIC_CMS_APP_URL || 'http://localhost:8016';
+const CMS_APP_API_KEY = process.env.NEXT_PUBLIC_CMS_APP_API_KEY || '';
 
 export const config = {
   apiBaseUrl: API_BASE_URL,
   cmsAppBaseUrl: CMS_APP_BASE_URL,
+  cmsAppApiKey: CMS_APP_API_KEY,
 } as const;
 
 /** Must match cms-app JwtConstants (AES/CBC/PKCS5). */

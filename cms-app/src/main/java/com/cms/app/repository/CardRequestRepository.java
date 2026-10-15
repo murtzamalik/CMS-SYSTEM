@@ -7,4 +7,7 @@ import java.util.Optional;
 
 public interface CardRequestRepository extends JpaRepository<CardRequest, Long> {
     Optional<CardRequest> findTopByRelationshipNumAndIsProcessedOrderByCreatedOnDesc(String relationshipNum, Integer isProcessed);
+
+    Optional<CardRequest> findTopByRelationshipNumAndCardTypeCodeAndIsProcessedOrderByCreatedOnDesc(
+            String relationshipNum, String cardTypeCode, Integer isProcessed);
 }

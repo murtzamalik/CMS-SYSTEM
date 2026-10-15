@@ -68,7 +68,7 @@ export function RequestCardScreen() {
         accountNumber,
         productCode,
         cardType,
-        relationshipNumber,
+        relationshipNum: relationshipNumber,
         requestTypeId,
       });
       setSuccess('Card request submitted. It will show as in process until issued.');

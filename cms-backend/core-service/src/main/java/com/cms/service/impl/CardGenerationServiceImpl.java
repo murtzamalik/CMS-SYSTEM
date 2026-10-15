@@ -142,21 +142,28 @@ public class CardGenerationServiceImpl implements CardGenerationService {
         card.setIsReplaced(0);
         card.setIssuedDate(LocalDateTime.now());
         card.setActivationDate(null);
-        card.setCardProdStatusId("001"); // 001 = Issued, card generated not yet exported
+
+        boolean virtual = cardTypeRepository.findByCardTypeCode(req.getCardTypeCode())
+                .map(CardType::isVirtualCard)
+                .orElse(false);
+        // 001 = Issued (awaiting bureau); 003 = Digital Issued (virtual / app-only, never print)
+        // PIN is never set at generation; virtual types also reject PIN APIs in cms-app.
+        card.setCardProdStatusId(virtual ? "003" : "001");
 
         // Assign limit profile: card-type default first, then configured STD fallback
         applyLimitProfileOnGenerate(req, card);
 
         String expiryYyMm = card.getExpiryDate().format(EXPIRY_YYMM);
         CvvGenerationService.CvvResult cvvResult = cvvGenerationService.generate(generatedPan, expiryYyMm);
-        String track1 = cardTrackDataFormatter.formatTrack1(generatedPan, expiryYyMm, card.getCardTitle(), cvvResult.cvv1());
-        String track2 = cardTrackDataFormatter.formatTrack2(generatedPan, expiryYyMm, cvvResult.cvv1());
-
         card.setCvv(encryptionService.encrypt(cvvResult.cvv1()));
         card.setCvv2(encryptionService.encrypt(cvvResult.cvv2()));
         card.setIcvv(encryptionService.encrypt(cvvResult.icvv()));
-        card.setTrack1Data(encryptionService.encrypt(track1));
-        card.setTrack2Data(encryptionService.encrypt(track2));
+        if (!virtual) {
+            String track1 = cardTrackDataFormatter.formatTrack1(generatedPan, expiryYyMm, card.getCardTitle(), cvvResult.cvv1());
+            String track2 = cardTrackDataFormatter.formatTrack2(generatedPan, expiryYyMm, cvvResult.cvv1());
+            card.setTrack1Data(encryptionService.encrypt(track1));
+            card.setTrack2Data(encryptionService.encrypt(track2));
+        }
 
         Card saved = cardRepository.save(card);
 

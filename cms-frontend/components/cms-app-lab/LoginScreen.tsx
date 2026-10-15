@@ -26,7 +26,7 @@ export function LoginScreen() {
     }
     setLoading(true);
     try {
-      const body = await login(username.trim(), password);
+      const body = await login(username.trim(), password, relationshipNum.trim());
       saveSession({
         loginId: body.loginId,
         fullName: body.fullName,

@@ -456,12 +456,25 @@ public class CardServiceImpl implements CardService {
             throw new BusinessValidationException("cardTypeId or cardTypeCode is required");
         // Resolve card type code from ID if provided
         String cardTypeCode = request.getCardTypeCode();
+        CardType cardType = null;
         if (request.getCardTypeId() != null) {
-            cardTypeCode = cardTypeRepository.findById(request.getCardTypeId())
-                    .map(t -> t.getCardTypeCode())
-                    .orElse(cardTypeCode);
+            cardType = cardTypeRepository.findById(request.getCardTypeId()).orElse(null);
+            if (cardType != null) {
+                cardTypeCode = cardType.getCardTypeCode();
+            }
+        }
+        if (cardType == null && cardTypeCode != null) {
+            cardType = cardTypeRepository.findByCardTypeCode(cardTypeCode).orElse(null);
+        }
+        if (cardType != null && cardType.isVirtualCard()) {
+            throw new BusinessValidationException("Virtual card types are app-only and cannot be exported for print");
         }
         List<Card> cards = cardRepository.findByCardProdStatusIdAndCardTypeCode("001", cardTypeCode);
+        // Extra guard: never return digital/virtual production status for bureau
+        cards = cards.stream()
+                .filter(c -> c.getCardProdStatusId() == null || !"003".equals(c.getCardProdStatusId().trim()))
+                .filter(c -> !isVirtualCardType(c.getCardTypeCode()))
+                .collect(Collectors.toList());
         return cardMapper.toResponseList(cards);
     }
 
@@ -473,6 +486,16 @@ public class CardServiceImpl implements CardService {
         List<Card> cards = cardRepository.findAllById(request.getCardIds());
         if (cards.isEmpty())
             throw new ResourceNotFoundException("Cards", "provided IDs");
+        List<Card> virtual = cards.stream()
+                .filter(c -> isVirtualCardType(c.getCardTypeCode())
+                        || (c.getCardProdStatusId() != null && "003".equals(c.getCardProdStatusId().trim())))
+                .collect(Collectors.toList());
+        if (!virtual.isEmpty()) {
+            throw new BusinessValidationException(
+                    "Virtual / digital cards cannot be exported for print (cardIds: "
+                            + virtual.stream().map(c -> String.valueOf(c.getCardId())).collect(Collectors.joining(", "))
+                            + ")");
+        }
         String exportPath = cardExportFileService.generateBulkExportFile(cards);
         for (Card card : cards) {
             card.setCardProdStatusId("002");
@@ -481,6 +504,15 @@ public class CardServiceImpl implements CardService {
         }
         cardRepository.saveAll(cards);
         return exportPath;
+    }
+
+    private boolean isVirtualCardType(String cardTypeCode) {
+        if (cardTypeCode == null || cardTypeCode.isBlank()) {
+            return false;
+        }
+        return cardTypeRepository.findByCardTypeCode(cardTypeCode.trim())
+                .map(CardType::isVirtualCard)
+                .orElse(false);
     }
 
 

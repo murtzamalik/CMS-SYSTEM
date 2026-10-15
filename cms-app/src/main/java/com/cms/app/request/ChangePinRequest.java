@@ -1,6 +1,5 @@
 package com.cms.app.request;
 
-import com.fasterxml.jackson.annotation.JsonAlias;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
@@ -21,6 +20,5 @@ public class ChangePinRequest {
 
     @NotBlank
     @JsonProperty("confirmNewPin")
-    @JsonAlias({"ConfirmNewPin"})
     private String confirmNewPin;
 }

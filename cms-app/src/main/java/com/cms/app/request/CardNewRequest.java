@@ -1,6 +1,7 @@
 package com.cms.app.request;
 
 import com.cms.app.validation.ProductCode;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 import org.hibernate.validator.constraints.Length;
@@ -23,7 +24,8 @@ public class CardNewRequest {
 
     @NotBlank
     @Length(min = 13, max = 13)
-    private String relationshipNumber;
+    @JsonAlias("relationshipNumber")
+    private String relationshipNum;
 
     @NotBlank
     private String requestTypeId;

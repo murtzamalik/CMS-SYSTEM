@@ -1,4 +1,5 @@
 import { config } from '@/lib/constants';
+import { getSession } from './session';
 import type { ResponseWrapper } from './types';
 
 export class CmsAppApiError extends Error {
@@ -9,10 +10,27 @@ export class CmsAppApiError extends Error {
   }
 }
 
+function authHeaders(includeJson = true): HeadersInit {
+  const headers: Record<string, string> = {
+    Accept: 'application/json',
+  };
+  if (includeJson) {
+    headers['Content-Type'] = 'application/json';
+  }
+  if (config.cmsAppApiKey) {
+    headers['X-Api-Key'] = config.cmsAppApiKey;
+  }
+  const token = getSession()?.token;
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
+  }
+  return headers;
+}
+
 export async function apiPost<T>(path: string, body: unknown): Promise<ResponseWrapper<T>> {
   const res = await fetch(`${config.cmsAppBaseUrl}${path}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+    headers: authHeaders(true),
     body: JSON.stringify(body),
   });
   if (!res.ok) {
@@ -31,10 +49,17 @@ export async function apiPost<T>(path: string, body: unknown): Promise<ResponseW
 export async function apiGet<T>(path: string): Promise<ResponseWrapper<T>> {
   const res = await fetch(`${config.cmsAppBaseUrl}${path}`, {
     method: 'GET',
-    headers: { Accept: 'application/json' },
+    headers: authHeaders(false),
   });
   if (!res.ok) {
-    throw new CmsAppApiError(res.status, `HTTP ${res.status}`);
+    let message = `HTTP ${res.status}`;
+    try {
+      const err = (await res.json()) as ResponseWrapper<unknown>;
+      message = err.responseMessage || message;
+    } catch {
+      /* ignore */
+    }
+    throw new CmsAppApiError(res.status, message);
   }
   return (await res.json()) as ResponseWrapper<T>;
 }

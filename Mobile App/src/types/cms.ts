@@ -9,6 +9,7 @@ export interface LoginResponse {
   fullName: string;
   token: string;
   groupIds: string[];
+  relationshipNum?: string;
 }
 
 export interface CardInquiryResponse {
@@ -17,11 +18,16 @@ export interface CardInquiryResponse {
   cardProdStatus: string;
   pan: string;
   createdOn: string;
+  cardTypeCode?: string;
   cardTypeName: string;
   expiryDate: string;
   cvv: string;
   cvv2: string;
   pinSet?: boolean;
+  /** App-only card: no CMS PIN, no print/export. */
+  isVirtual?: boolean;
+  /** true when CVV (and virtual full PAN) is present in this response. */
+  sensitiveRevealed?: boolean;
 }
 
 export interface CardLovResponse {
@@ -45,6 +51,42 @@ export interface CardSpendingSummaryResponse {
   singleTranLimit: number;
   dailyAvailableSpending: number;
   monthlyAvailableSpending: number;
+}
+
+export interface CardTransactionItem {
+  id: number;
+  pan: string;
+  relationshipNum?: string;
+  amount: number;
+  channelCode: string;
+  tranCode: string;
+  responseCode: number;
+  responseMessage?: string;
+  availableAfter?: number;
+  authRef?: string;
+  createdOn: string;
+  approved: boolean;
+}
+
+export interface CardTransactionHistoryResponse {
+  items: CardTransactionItem[];
+  page: number;
+  size: number;
+  totalElements: number;
+  totalPages: number;
+}
+
+export interface CardStatementResponse {
+  fromDate: string;
+  toDate: string;
+  relationshipNum?: string;
+  pan?: string;
+  totalCount: number;
+  approvedCount: number;
+  declinedCount: number;
+  totalApprovedAmount: number;
+  approvedAmountByChannel: Record<string, number>;
+  transactions: CardTransactionItem[];
 }
 
 export interface SessionCard {

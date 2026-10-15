@@ -9,4 +9,10 @@ public class ForgotPin {
     private String pin;
     private String confirmPin;
     private String flag;
+    /**
+     * Required when {@code flag=F} (forgot PIN).
+     * LasPay verifies OTP, then sends this proof (signed payload.signature or opaque otpRef).
+     * CMS does not verify the SMS OTP itself.
+     */
+    private String otpProof;
 }

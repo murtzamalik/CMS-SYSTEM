@@ -12,6 +12,11 @@ public class CardAuthorizeRequest {
     private String pan;
     /** AES-encrypted PIN (same as /card/validate and mobile app). */
     private String pin;
+    /**
+     * APS PIN block, 16 hex chars, encrypted under the issuer PVK.
+     * When this is set, {@code pin} is not required.
+     */
+    private String pinBlock;
     /** Optional MM/YYYY or MM/YY — also checked against card expiry in DB. */
     private String expiryDate;
     /** 1=ATM, 2=POS, 3=Ecommerce */
@@ -23,4 +28,6 @@ public class CardAuthorizeRequest {
     private String tranCode;
     /** Transaction amount to authorize and deduct. */
     private String amount;
+    /** Optional client / APS reference stored on the transaction journal. */
+    private String authRef;
 }

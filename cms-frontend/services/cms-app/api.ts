@@ -9,20 +9,29 @@ import type {
 } from './types';
 import { apiGet, apiPost, unwrap } from './client';
 
-export async function login(username: string, password: string) {
-  const res = await apiPost<LoginResponse>('/user/login', { username, password });
+export async function login(username: string, password: string, relationshipNum?: string) {
+  const res = await apiPost<LoginResponse>('/user/login', {
+    username,
+    password,
+    ...(relationshipNum ? { relationshipNum } : {}),
+  });
   return unwrap(res)!;
 }
 
-export async function cardInquiry(relationshipNum: string) {
-  const res = await apiPost<CardInquiryResponse>('/card/inquiry', { relationshipNum });
+export async function cardInquiry(relationshipNum: string, pin?: string) {
+  const res = await apiPost<CardInquiryResponse[] | CardInquiryResponse>('/card/inquiry', {
+    relationshipNum,
+    ...(pin ? { pin: encryptPin(pin) } : {}),
+  });
   if (res.responseCode === 13 || res.responseCode === 3) {
-    return { code: res.responseCode, message: res.responseMessage, card: null };
+    return { code: res.responseCode, message: res.responseMessage, card: null, cards: [] as CardInquiryResponse[] };
   }
   if (res.responseCode !== 0) {
     throw Object.assign(new Error(res.responseMessage), { code: res.responseCode });
   }
-  return { code: 0, message: res.responseMessage, card: res.responseBody };
+  const body = res.responseBody;
+  const cards = Array.isArray(body) ? body : body ? [body] : [];
+  return { code: 0, message: res.responseMessage, card: cards[0] ?? null, cards };
 }
 
 export async function getLovs() {
@@ -35,7 +44,7 @@ export async function newCardRequest(payload: {
   accountNumber: string;
   productCode: string;
   cardType: string;
-  relationshipNumber: string;
+  relationshipNum: string;
   requestTypeId: string;
 }) {
   const res = await apiPost<null>('/card/new-request', payload);
@@ -53,6 +62,8 @@ export async function generatePin(payload: {
   pin: string;
   confirmPin: string;
   flag?: string;
+  /** Required when flag=F — from LasPay after OTP. */
+  otpProof?: string;
 }) {
   const res = await apiPost<null>('/card/generate-pin', {
     ...payload,

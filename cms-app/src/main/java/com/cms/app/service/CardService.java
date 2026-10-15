@@ -2,6 +2,7 @@ package com.cms.app.service;
 
 import com.cms.app.config.AESencryption;
 import com.cms.app.config.ResponseCode;
+import com.cms.app.security.AuthContext;
 import com.cms.app.entity.Account;
 import com.cms.app.entity.AccountStatus;
 import com.cms.app.entity.AccountType;
@@ -13,6 +14,7 @@ import com.cms.app.entity.CardProduct;
 import com.cms.app.entity.CardProductionStatus;
 import com.cms.app.entity.CardRequest;
 import com.cms.app.entity.CardStatus;
+import com.cms.app.entity.CardTransaction;
 import com.cms.app.entity.CardType;
 import com.cms.app.entity.LimitProfile;
 import com.cms.app.repository.AccountRepository;
@@ -27,6 +29,7 @@ import com.cms.app.repository.CardRepository;
 import com.cms.app.repository.CardRequestRepository;
 import com.cms.app.repository.CardSpendingSummaryRepository;
 import com.cms.app.repository.CardStatusRepository;
+import com.cms.app.repository.CardTransactionRepository;
 import com.cms.app.repository.CardTypeRepository;
 import com.cms.app.repository.LimitProfileRepository;
 import com.cms.app.request.CardAuthorizeRequest;
@@ -35,6 +38,8 @@ import com.cms.app.request.CardInquiryRequest;
 import com.cms.app.request.CardLimitValidateRequest;
 import com.cms.app.request.CardNewRequest;
 import com.cms.app.request.CardSpendingSummaryRequest;
+import com.cms.app.request.CardStatementRequest;
+import com.cms.app.request.CardTransactionHistoryRequest;
 import com.cms.app.request.CardUpdateStatusRequest;
 import com.cms.app.request.CardValidationRequest;
 import com.cms.app.request.ChangePinRequest;
@@ -44,8 +49,13 @@ import com.cms.app.response.CardInquiryResponse;
 import com.cms.app.response.CardLimitValidateResponse;
 import com.cms.app.response.CardLovResponse;
 import com.cms.app.response.CardSpendingSummaryResponse;
+import com.cms.app.response.CardStatementResponse;
+import com.cms.app.response.CardTransactionHistoryResponse;
+import com.cms.app.response.CardTransactionItemResponse;
 import com.cms.app.response.ResponseWrapper;
 import jakarta.validation.Valid;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -54,12 +64,16 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Date;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -68,6 +82,10 @@ public class CardService {
     private static final String DEFAULT_ACCOUNT_TYPE = "00";
     private static final String DEFAULT_ACCOUNT_STATUS = "OPEN";
     private static final String DEFAULT_CURRENCY = "AFN";
+    /** VCR-007 / FRD-069: max failed PIN/CVV/track2 attempts before PIN lock. */
+    private static final int DEFAULT_PIN_MAX_RETRY = 3;
+    private static final int PIN_STATUS_OK = 0;
+    private static final int PIN_STATUS_LOCKED = 1;
 
     private final CardRepository cardRepository;
     private final CardRequestRepository cardRequestRepository;
@@ -83,7 +101,11 @@ public class CardService {
     private final CardSpendingSummaryRepository cardSpendingSummaryRepository;
     private final CardLimitActualRepository cardLimitActualRepository;
     private final CardLimitCustomizedRepository cardLimitCustomizedRepository;
+    private final CardTransactionRepository cardTransactionRepository;
     private final AESencryption aesEncryption;
+    private final PinBlockService pinBlockService;
+    private final CardDataEncryptionService cardDataEncryptionService;
+    private final OtpProofService otpProofService;
 
     public CardService(CardRepository cardRepository,
                        CardRequestRepository cardRequestRepository,
@@ -99,7 +121,11 @@ public class CardService {
                        CardSpendingSummaryRepository cardSpendingSummaryRepository,
                        CardLimitActualRepository cardLimitActualRepository,
                        CardLimitCustomizedRepository cardLimitCustomizedRepository,
-                       AESencryption aesEncryption) {
+                       CardTransactionRepository cardTransactionRepository,
+                       AESencryption aesEncryption,
+                       PinBlockService pinBlockService,
+                       CardDataEncryptionService cardDataEncryptionService,
+                       OtpProofService otpProofService) {
         this.cardRepository = cardRepository;
         this.cardRequestRepository = cardRequestRepository;
         this.accountRepository = accountRepository;
@@ -114,39 +140,110 @@ public class CardService {
         this.cardSpendingSummaryRepository = cardSpendingSummaryRepository;
         this.cardLimitActualRepository = cardLimitActualRepository;
         this.cardLimitCustomizedRepository = cardLimitCustomizedRepository;
+        this.cardTransactionRepository = cardTransactionRepository;
         this.aesEncryption = aesEncryption;
+        this.pinBlockService = pinBlockService;
+        this.cardDataEncryptionService = cardDataEncryptionService;
+        this.otpProofService = otpProofService;
     }
 
-    public ResponseWrapper<CardInquiryResponse> inquiry(CardInquiryRequest request) {
-        ResponseWrapper<CardInquiryResponse> response = new ResponseWrapper<>();
+    @Transactional
+    public ResponseWrapper<List<CardInquiryResponse>> inquiry(CardInquiryRequest request) {
+        ResponseWrapper<List<CardInquiryResponse>> response = new ResponseWrapper<>();
         response.setResponseCode(ResponseCode.NO_DATA);
         response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
 
-        Optional<CardRequest> pending = cardRequestRepository
-                .findTopByRelationshipNumAndIsProcessedOrderByCreatedOnDesc(request.getRelationshipNum(), 0);
-        if (pending.isPresent()) {
-            response.setResponseCode(ResponseCode.CARD_IN_PROCESS);
-            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_IN_PROCESS));
+        String relationshipNum = request.getRelationshipNum();
+        if (!relationshipAllowed(relationshipNum)) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
+        String cardType = blankToNull(request.getCardType());
+
+        if (cardType != null) {
+            Optional<CardRequest> pending = cardRequestRepository
+                    .findTopByRelationshipNumAndCardTypeCodeAndIsProcessedOrderByCreatedOnDesc(
+                            relationshipNum, cardType, 0);
+            if (pending.isPresent()) {
+                response.setResponseCode(ResponseCode.CARD_IN_PROCESS);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_IN_PROCESS));
+                return response;
+            }
+            Optional<Card> card = cardRepository
+                    .findFirstByRelationshipNumAndCardTypeCodeOrderByCreatedOnDesc(relationshipNum, cardType);
+            if (card.isEmpty()) {
+                return response;
+            }
+            response.setResponseCode(ResponseCode.SUCCESS);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
+            response.setResponseBody(List.of(toInquiryResponse(card.get(), request.getPin())));
             return response;
         }
 
-        Optional<Card> card = cardRepository.findFirstByRelationshipNumOrderByCreatedOnDesc(request.getRelationshipNum());
-        if (card.isPresent()) {
-            response.setResponseCode(ResponseCode.SUCCESS);
-            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
-            response.setResponseBody(toInquiryResponse(card.get()));
+        List<Card> cards = cardRepository.findByRelationshipNumOrderByCreatedOnDesc(relationshipNum);
+        if (cards.isEmpty()) {
+            Optional<CardRequest> pending = cardRequestRepository
+                    .findTopByRelationshipNumAndIsProcessedOrderByCreatedOnDesc(relationshipNum, 0);
+            if (pending.isPresent()) {
+                response.setResponseCode(ResponseCode.CARD_IN_PROCESS);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_IN_PROCESS));
+            }
+            return response;
         }
+
+        response.setResponseCode(ResponseCode.SUCCESS);
+        response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
+        String pin = request.getPin();
+        response.setResponseBody(cards.stream().map(c -> toInquiryResponse(c, pin)).toList());
         return response;
     }
 
-    private CardInquiryResponse toInquiryResponse(Card card) {
+    /**
+     * Physical: CVV only when optional PIN matches (option A — wrong/missing PIN still returns the card list).
+     * Wrong PIN on reveal consumes a try; locked PIN never reveals. Virtual: always full PAN/CVV.
+     */
+    private CardInquiryResponse toInquiryResponse(Card card, String requestPin) {
         CardInquiryResponse body = new CardInquiryResponse();
         body.setCardTitle(card.getCardTitle());
-        body.setPan(card.getPan());
         body.setCreatedOn(card.getCreatedOn());
         body.setExpiryDate(card.getExpiryDate());
-        body.setCvv(decodeMaybe(card.getCvv()));
-        body.setCvv2(decodeMaybe(card.getCvv2()));
+
+        boolean virtual = isVirtualCard(card);
+        body.setIsVirtual(virtual);
+        if (virtual) {
+            String clearPan = decryptPan(card);
+            body.setPan(clearPan != null ? clearPan : card.getPan());
+            body.setCvv(cardDataEncryptionService.decryptSensitiveField(card.getCvv()));
+            body.setCvv2(cardDataEncryptionService.decryptSensitiveField(card.getCvv2()));
+            body.setPinSet(false);
+            body.setSensitiveRevealed(true);
+        } else {
+            boolean pinSet = card.getPinOffset() != null && !card.getPinOffset().isBlank();
+            body.setPinSet(pinSet);
+            body.setPan(card.getPan());
+            boolean reveal = false;
+            if (pinSet && requestPin != null && !requestPin.isBlank()) {
+                if (isPinLocked(card)) {
+                    reveal = false;
+                } else if (pinsMatchFlexible(card.getPinOffset(), requestPin)) {
+                    resetPinRetries(card);
+                    reveal = true;
+                } else {
+                    recordCredentialFailure(card);
+                    reveal = false;
+                }
+            }
+            if (reveal) {
+                body.setCvv(decodeMaybe(card.getCvv()));
+                body.setCvv2(decodeMaybe(card.getCvv2()));
+                body.setSensitiveRevealed(true);
+            } else {
+                body.setCvv(null);
+                body.setCvv2(null);
+                body.setSensitiveRevealed(false);
+            }
+        }
 
         if (card.getCardStatusCode() != null) {
             cardStatusRepository.findByCardStatusCode(card.getCardStatusCode())
@@ -154,6 +251,7 @@ public class CardService {
                     .ifPresentOrElse(body::setCardStatusCode, () -> body.setCardStatusCode(card.getCardStatusCode()));
         }
         if (card.getCardTypeCode() != null) {
+            body.setCardTypeCode(card.getCardTypeCode());
             cardTypeRepository.findByCardTypeCode(card.getCardTypeCode())
                     .map(CardType::getCardTypeName)
                     .ifPresentOrElse(body::setCardTypeName, () -> body.setCardTypeName(card.getCardTypeCode()));
@@ -163,7 +261,6 @@ public class CardService {
                     .map(CardProductionStatus::getCardProdStatusName)
                     .ifPresentOrElse(body::setCardProdStatus, () -> body.setCardProdStatus(card.getCardProdStatusId()));
         }
-        body.setPinSet(card.getPinOffset() != null && !card.getPinOffset().isBlank());
         return body;
     }
 
@@ -171,11 +268,51 @@ public class CardService {
         if (value == null || value.isBlank()) {
             return value;
         }
-        try {
-            return new String(Base64.getDecoder().decode(value), StandardCharsets.UTF_8);
-        } catch (IllegalArgumentException ex) {
-            return value;
+        return cardDataEncryptionService.decryptSensitiveField(value);
+    }
+
+    private String decryptPan(Card card) {
+        if (card.getPanEncrypted() == null || card.getPanEncrypted().isBlank()) {
+            return null;
         }
+        try {
+            return cardDataEncryptionService.decrypt(card.getPanEncrypted());
+        } catch (RuntimeException ex) {
+            return null;
+        }
+    }
+
+    private boolean isVirtualCard(Card card) {
+        if (card == null || card.getCardTypeCode() == null || card.getCardTypeCode().isBlank()) {
+            return false;
+        }
+        return cardTypeRepository.findByCardTypeCode(card.getCardTypeCode().trim())
+                .map(CardType::isVirtualCard)
+                .orElse(false);
+    }
+
+    /** Resolve by clear PAN column first, then by PAN_HASH (full PAN from virtual inquiry). */
+    private Optional<Card> findCardByPanInput(String panInput) {
+        if (panInput == null || panInput.isBlank()) {
+            return Optional.empty();
+        }
+        String pan = panInput.trim();
+        Optional<Card> byPan = cardRepository.findByPan(pan);
+        if (byPan.isPresent()) {
+            return byPan;
+        }
+        String hash = cardDataEncryptionService.panHashForLookup(pan);
+        if (hash == null) {
+            return Optional.empty();
+        }
+        return cardRepository.findByPanHash(hash);
+    }
+
+    private ResponseWrapper<Void> pinNotApplicableForVirtual() {
+        ResponseWrapper<Void> response = new ResponseWrapper<>();
+        response.setResponseCode(ResponseCode.PIN_NOT_APPLICABLE_VIRTUAL);
+        response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_NOT_APPLICABLE_VIRTUAL));
+        return response;
     }
 
     /**
@@ -200,11 +337,28 @@ public class CardService {
             return response;
         }
 
+        String relationshipNum = request.getRelationshipNum();
+        if (!relationshipAllowed(relationshipNum)) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
+        String cardTypeCode = request.getCardType().trim();
+
         Optional<CardRequest> pending = cardRequestRepository
-                .findTopByRelationshipNumAndIsProcessedOrderByCreatedOnDesc(request.getRelationshipNumber(), 0);
+                .findTopByRelationshipNumAndCardTypeCodeAndIsProcessedOrderByCreatedOnDesc(
+                        relationshipNum, cardTypeCode, 0);
         if (pending.isPresent()) {
             response.setResponseCode(ResponseCode.CARD_REQUEST_ALREADY_PENDING);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_REQUEST_ALREADY_PENDING));
+            return response;
+        }
+
+        Optional<Card> existing = cardRepository
+                .findFirstByRelationshipNumAndCardTypeCodeOrderByCreatedOnDesc(relationshipNum, cardTypeCode);
+        if (existing.isPresent()) {
+            response.setResponseCode(ResponseCode.ALREADY_DATA);
+            response.setResponseMessage("A card of this type already exists for this relationship");
             return response;
         }
 
@@ -219,10 +373,10 @@ public class CardService {
         String branchCode = resolveBranchCode(account);
 
         CardRequest cr = new CardRequest();
-        cr.setRelationshipNum(request.getRelationshipNumber());
+        cr.setRelationshipNum(relationshipNum);
         cr.setAccountNum(request.getAccountNumber());
         cr.setCardTitle(request.getCardTitle());
-        cr.setCardTypeCode(request.getCardType());
+        cr.setCardTypeCode(cardTypeCode);
         cr.setProductCode(request.getProductCode());
         cr.setBranchCode(branchCode);
         cr.setRequestTypeId(request.getRequestTypeId());
@@ -308,6 +462,11 @@ public class CardService {
             return response;
         }
         Card card = cardOpt.get();
+        if (!relationshipAllowed(card.getRelationshipNum())) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
         if (card.getCardStatusCode() != null && "003".equals(card.getCardStatusCode().trim())) {
             response.setResponseCode(ResponseCode.CARD_STATUS_UPDATE_ERROR);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_STATUS_UPDATE_ERROR));
@@ -332,10 +491,30 @@ public class CardService {
     public ResponseWrapper<List<CardLovResponse>> getLov(String slug) {
         ResponseWrapper<List<CardLovResponse>> response = new ResponseWrapper<>();
         List<CardLovResponse> lovs = new ArrayList<>();
-        lovs.add(cardProducts());
-        lovs.add(cardTypes());
-        lovs.add(cardStatuses());
-        lovs.add(emptyRequestTypes());
+        String key = slug == null ? "" : slug.trim().toLowerCase();
+        if (key.isEmpty() || "all".equals(key)) {
+            lovs.add(cardProducts());
+            lovs.add(cardTypes());
+            lovs.add(cardStatuses());
+            lovs.add(cardProductionStatuses());
+            lovs.add(cardRequestTypes());
+        } else if ("card-product".equals(key) || "card-products".equals(key) || "product".equals(key)) {
+            lovs.add(cardProducts());
+        } else if ("card-types".equals(key) || "card-type".equals(key) || "type".equals(key)) {
+            lovs.add(cardTypes());
+        } else if ("card-status".equals(key) || "card-statuses".equals(key) || "status".equals(key)) {
+            lovs.add(cardStatuses());
+        } else if ("card-prod-status".equals(key) || "card-production-status".equals(key)
+                || "production-status".equals(key)) {
+            lovs.add(cardProductionStatuses());
+        } else if ("card-request-types".equals(key) || "request-types".equals(key)) {
+            lovs.add(cardRequestTypes());
+        } else {
+            response.setResponseCode(ResponseCode.NO_DATA);
+            response.setResponseMessage("Unknown LOV slug: " + slug);
+            response.setResponseBody(List.of());
+            return response;
+        }
         response.setResponseCode(ResponseCode.SUCCESS);
         response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
         response.setResponseBody(lovs);
@@ -406,22 +585,41 @@ public class CardService {
         return lov;
     }
 
-    private CardLovResponse emptyRequestTypes() {
+    private CardLovResponse cardRequestTypes() {
         CardLovResponse lov = new CardLovResponse();
         lov.setType("card-request-types");
         HashMap<String, String> map = new HashMap<>();
         map.put("1", "NEW");
         map.put("NEW", "NEW");
+        map.put("REPLACEMENT", "REPLACEMENT");
+        map.put("RENEWAL", "RENEWAL");
         lov.setLov(map);
         return lov;
     }
 
+    private CardLovResponse cardProductionStatuses() {
+        CardLovResponse lov = new CardLovResponse();
+        lov.setType("card-prod-status");
+        HashMap<String, String> map = new HashMap<>();
+        for (CardProductionStatus s : cardProductionStatusRepository.findAll()) {
+            if (s == null || s.getCardProdStatusId() == null || s.getCardProdStatusId().isBlank()) {
+                continue;
+            }
+            map.put(
+                    s.getCardProdStatusId(),
+                    s.getCardProdStatusName() != null ? s.getCardProdStatusName() : s.getCardProdStatusId());
+        }
+        lov.setLov(map);
+        return lov;
+    }
+
+    @Transactional
     public ResponseWrapper<Void> validate(CardValidationRequest request) {
         ResponseWrapper<Void> response = new ResponseWrapper<>();
         response.setResponseCode(ResponseCode.SUCCESS);
         response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
 
-        Optional<Card> cardOpt = cardRepository.findByPan(request.getPan());
+        Optional<Card> cardOpt = findCardByPanInput(request.getPan());
         if (cardOpt.isEmpty()) {
             response.setResponseCode(ResponseCode.NO_DATA);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
@@ -434,37 +632,70 @@ public class CardService {
             return response;
         }
 
-        if (request.getPin() != null && !request.getPin().isEmpty()) {
+        boolean virtual = isVirtualCard(card);
+        boolean checkingPin = request.getPin() != null && !request.getPin().isEmpty();
+        boolean checkingCvv = request.getCvv() != null && !request.getCvv().isEmpty();
+        boolean checkingTrack2 = request.getTrack2() != null && !request.getTrack2().isEmpty();
+        boolean credentialCheck = (!virtual && checkingPin)
+                || checkingCvv
+                || (!virtual && checkingTrack2);
+
+        if (credentialCheck && !virtual && isPinLocked(card)) {
+            response.setResponseCode(ResponseCode.PIN_LOCKED);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_LOCKED));
+            return response;
+        }
+
+        if (checkingPin) {
+            if (virtual) {
+                response.setResponseCode(ResponseCode.PIN_NOT_APPLICABLE_VIRTUAL);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_NOT_APPLICABLE_VIRTUAL));
+                return response;
+            }
             if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
                 response.setResponseCode(ResponseCode.NO_DATA);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
                 return response;
             }
             if (!pinsMatch(card.getPinOffset(), request.getPin())) {
+                recordCredentialFailure(card);
                 response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
                 return response;
             }
         }
 
-        if (request.getCvv() != null && !request.getCvv().isEmpty()) {
-            String stored = decodeMaybe(card.getCvv());
-            String stored2 = decodeMaybe(card.getCvv2());
+        if (checkingCvv) {
+            String stored = cardDataEncryptionService.decryptSensitiveField(card.getCvv());
+            String stored2 = cardDataEncryptionService.decryptSensitiveField(card.getCvv2());
             if (!request.getCvv().equals(stored) && !request.getCvv().equals(stored2)
                     && !request.getCvv().equals(card.getCvv()) && !request.getCvv().equals(card.getCvv2())) {
+                if (!virtual) {
+                    recordCredentialFailure(card);
+                }
                 response.setResponseCode(ResponseCode.CVV_NOT_MATCHED);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CVV_NOT_MATCHED));
                 return response;
             }
         }
 
-        if (request.getTrack2() != null && !request.getTrack2().isEmpty()) {
+        if (checkingTrack2) {
+            if (virtual) {
+                response.setResponseCode(ResponseCode.FAILURE);
+                response.setResponseMessage("Track2 is not applicable for virtual cards");
+                return response;
+            }
             String track2 = decodeMaybe(card.getTrack2Data());
             if (!request.getTrack2().equals(track2) && !request.getTrack2().equals(card.getTrack2Data())) {
+                recordCredentialFailure(card);
                 response.setResponseCode(ResponseCode.TRACK2_NOT_MATCHED);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.TRACK2_NOT_MATCHED));
                 return response;
             }
+        }
+
+        if (credentialCheck && !virtual) {
+            resetPinRetries(card);
         }
         return response;
     }
@@ -476,6 +707,11 @@ public class CardService {
     public ResponseWrapper<Void> changePin(@Valid ChangePinRequest request) {
         ResponseWrapper<Void> response = new ResponseWrapper<>();
 
+        if (!relationshipAllowed(request.getRelationshipNum())) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
         Optional<Card> cardOpt = cardRepository.findByRelationshipNumAndPan(request.getRelationshipNum(), request.getPan());
         if (cardOpt.isEmpty()) {
             response.setResponseCode(ResponseCode.NO_DATA);
@@ -483,12 +719,21 @@ public class CardService {
             return response;
         }
         Card card = cardOpt.get();
+        if (isVirtualCard(card)) {
+            return pinNotApplicableForVirtual();
+        }
         if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
             response.setResponseCode(ResponseCode.NO_DATA);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
             return response;
         }
+        if (isPinLocked(card)) {
+            response.setResponseCode(ResponseCode.PIN_LOCKED);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_LOCKED));
+            return response;
+        }
         if (!pinsMatch(card.getPinOffset(), request.getOldPin())) {
+            recordCredentialFailure(card);
             response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
             return response;
@@ -501,6 +746,9 @@ public class CardService {
 
         card.setPinOffset(request.getNewPin());
         card.setPinGeneratedOn(LocalDateTime.now());
+        applyPinRetryDefaults(card);
+        card.setPinStatus(PIN_STATUS_OK);
+        card.setPinRetryAvailable(resolvePinMaxRetry(card));
         card.setUpdatedOn(LocalDateTime.now());
         card.setUpdatedBy("API_APP");
         cardRepository.save(card);
@@ -513,6 +761,7 @@ public class CardService {
     /**
      * Same as old cms generate-pin / forgotPin:
      * flag=F → reset existing PIN; otherwise first-time set + status 001.
+     * Virtual cards reject PIN entirely.
      */
     @Transactional
     public ResponseWrapper<Void> forgotPin(ForgotPin request) {
@@ -525,6 +774,11 @@ public class CardService {
             return response;
         }
 
+        if (!relationshipAllowed(request.getRelationshipNum())) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
         Optional<Card> cardOpt = cardRepository.findByRelationshipNumAndPan(request.getRelationshipNum(), request.getPan());
         if (cardOpt.isEmpty()) {
             response.setResponseCode(ResponseCode.NO_DATA);
@@ -532,17 +786,37 @@ public class CardService {
             return response;
         }
         Card card = cardOpt.get();
+        if (isVirtualCard(card)) {
+            return pinNotApplicableForVirtual();
+        }
 
         boolean pinAlreadySet = card.getPinOffset() != null && !card.getPinOffset().isBlank();
 
         if (request.getFlag() != null && request.getFlag().equalsIgnoreCase("F")) {
+            // LasPay verifies OTP; CMS requires otpProof before resetting PIN.
+            if (request.getOtpProof() == null || request.getOtpProof().isBlank()) {
+                response.setResponseCode(ResponseCode.OTP_PROOF_REQUIRED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.OTP_PROOF_REQUIRED));
+                return response;
+            }
+            String proofError = otpProofService.validateForgotPinProof(
+                    request.getOtpProof(), request.getRelationshipNum(), request.getPan());
+            if (proofError != null) {
+                response.setResponseCode(ResponseCode.OTP_PROOF_INVALID);
+                response.setResponseMessage(proofError);
+                return response;
+            }
             if (!pinAlreadySet) {
                 response.setResponseCode(ResponseCode.NO_DATA);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
                 return response;
             }
+            // Forgot-PIN unlocks PIN after LasPay otpProof (VCR-007).
             card.setPinOffset(request.getPin());
             card.setPinGeneratedOn(LocalDateTime.now());
+            applyPinRetryDefaults(card);
+            card.setPinStatus(PIN_STATUS_OK);
+            card.setPinRetryAvailable(resolvePinMaxRetry(card));
             card.setUpdatedOn(LocalDateTime.now());
             card.setUpdatedBy("API_APP");
             cardRepository.save(card);
@@ -555,9 +829,9 @@ public class CardService {
             }
             card.setPinOffset(request.getPin());
             card.setPinGeneratedOn(LocalDateTime.now());
-            card.setPinStatus(0);
-            card.setPinRetryAvailable(3);
-            card.setPinMaxRetry(3);
+            card.setPinStatus(PIN_STATUS_OK);
+            card.setPinMaxRetry(DEFAULT_PIN_MAX_RETRY);
+            card.setPinRetryAvailable(DEFAULT_PIN_MAX_RETRY);
             card.setCardStatusCode("001");
             card.setUpdatedOn(LocalDateTime.now());
             card.setUpdatedBy("API_APP");
@@ -579,8 +853,63 @@ public class CardService {
         return stored.equals(incoming);
     }
 
+    /**
+     * VCR-007: shared try counter for PIN / CVV / track2 on physical cards.
+     * Lock is PIN-only ({@code PIN_STATUS=1}); card status is not changed to Warm.
+     */
+    private boolean isPinLocked(Card card) {
+        applyPinRetryDefaults(card);
+        if (card.getPinStatus() != null && card.getPinStatus() == PIN_STATUS_LOCKED) {
+            return true;
+        }
+        Integer avail = card.getPinRetryAvailable();
+        return avail != null && avail <= 0;
+    }
+
+    private void applyPinRetryDefaults(Card card) {
+        if (card.getPinMaxRetry() == null || card.getPinMaxRetry() <= 0) {
+            card.setPinMaxRetry(DEFAULT_PIN_MAX_RETRY);
+        }
+        if (card.getPinRetryAvailable() == null) {
+            card.setPinRetryAvailable(card.getPinMaxRetry());
+        }
+        if (card.getPinStatus() == null) {
+            card.setPinStatus(PIN_STATUS_OK);
+        }
+    }
+
+    private int resolvePinMaxRetry(Card card) {
+        Integer max = card.getPinMaxRetry();
+        return max != null && max > 0 ? max : DEFAULT_PIN_MAX_RETRY;
+    }
+
+    private void recordCredentialFailure(Card card) {
+        applyPinRetryDefaults(card);
+        int avail = card.getPinRetryAvailable() != null ? card.getPinRetryAvailable() : resolvePinMaxRetry(card);
+        avail = Math.max(0, avail - 1);
+        card.setPinRetryAvailable(avail);
+        if (avail <= 0) {
+            card.setPinStatus(PIN_STATUS_LOCKED);
+            card.setPinRetryAvailable(0);
+        }
+        card.setUpdatedOn(LocalDateTime.now());
+        card.setUpdatedBy("API_APP");
+        cardRepository.save(card);
+    }
+
+    private void resetPinRetries(Card card) {
+        applyPinRetryDefaults(card);
+        int max = resolvePinMaxRetry(card);
+        card.setPinMaxRetry(max);
+        card.setPinRetryAvailable(max);
+        card.setPinStatus(PIN_STATUS_OK);
+        card.setUpdatedOn(LocalDateTime.now());
+        card.setUpdatedBy("API_APP");
+        cardRepository.save(card);
+    }
+
     public ResponseWrapper<CardLimitValidateResponse> availableLimit(CardAvailableLimitRequest request) {
-        return resolveLimit(request.getPan(), request.getChannelCode(), null, false);
+        return resolveLimit(request.getPan(), request.getChannelCode(), request.getTranCode(), null, false);
     }
 
     public ResponseWrapper<List<CardSpendingSummaryResponse>> spendingSummary(CardSpendingSummaryRequest request) {
@@ -627,7 +956,7 @@ public class CardService {
                     channelLong = null;
                 }
             }
-            BigDecimal actualAvail = findTodayActualAvailable(panForActual, channelLong, tranCode);
+            BigDecimal actualAvail = findTodayActualAvailable(panForActual, channelLong, tranCode, false);
             if (actualAvail != null) {
                 item.setDailyAvailableSpending(actualAvail.doubleValue());
                 item.setMonthlyAvailableSpending(actualAvail.doubleValue());
@@ -656,6 +985,18 @@ public class CardService {
             return null;
         }
         return value.trim();
+    }
+
+    /**
+     * When the JWT carries a relationshipNum, the request must use the same value.
+     * Tokens without a bound relationship (service accounts) are not restricted here.
+     */
+    private boolean relationshipAllowed(String requestRelationshipNum) {
+        String tokenRel = AuthContext.relationshipNum();
+        if (tokenRel == null || tokenRel.isBlank()) {
+            return true;
+        }
+        return requestRelationshipNum != null && tokenRel.equals(requestRelationshipNum.trim());
     }
 
     private static String asString(Object value) {
@@ -692,7 +1033,7 @@ public class CardService {
     }
 
     public ResponseWrapper<CardLimitValidateResponse> validateLimit(CardLimitValidateRequest request) {
-        return resolveLimit(request.getPan(), request.getChannelCode(), request.getAmount(), true);
+        return resolveLimit(request.getPan(), request.getChannelCode(), request.getTranCode(), request.getAmount(), true);
     }
 
     /**
@@ -701,6 +1042,7 @@ public class CardService {
      * 2) ceiling from CARD_LIMIT_CUSTOMIZED (if active) else profile/max
      * 3) same-day CARD_LIMIT_ACTUAL remaining (create row if missing / new day)
      * 4) deduct amount and update the same actual row
+     * 5) append CARD_TRANSACTION journal row (success or decline after card is known)
      *
      * channelCode: 1=ATM, 2=POS, 3=Ecommerce. tranCode defaults to same as channel.
      */
@@ -718,9 +1060,9 @@ public class CardService {
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.INVALID_AMOUNT));
             return response;
         }
-        if (request.getChannelCode() == null) {
+        if (!isKnownChannelCode(request.getChannelCode())) {
             response.setResponseCode(ResponseCode.FAILURE);
-            response.setResponseMessage("channelCode is required (1=ATM, 2=POS, 3=Ecommerce)");
+            response.setResponseMessage(CHANNEL_CODE_REQUIRED_MESSAGE);
             return response;
         }
 
@@ -739,19 +1081,33 @@ public class CardService {
         }
 
         String pan = request.getPan().trim();
-        Optional<Card> cardOpt = cardRepository.findByPan(pan);
+        Optional<Card> cardOpt = findCardByPanInput(pan);
         if (cardOpt.isEmpty()) {
             response.setResponseCode(ResponseCode.NO_DATA);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
             return response;
         }
         Card card = cardOpt.get();
+        // Limit actual rows are keyed by the PAN value stored on the card (often masked).
+        String panForLimits = card.getPan() != null && !card.getPan().isBlank() ? card.getPan().trim() : pan;
+        String channelKey = String.valueOf(request.getChannelCode());
+        String tranKey = (request.getTranCode() != null && !request.getTranCode().isBlank())
+                ? request.getTranCode().trim()
+                : channelKey;
+        String authRef = blankToNull(request.getAuthRef());
 
         if (card.getCardStatusCode() != null) {
             String status = card.getCardStatusCode().trim();
             if ("003".equals(status) || "HOT".equalsIgnoreCase(status)) {
                 response.setResponseCode(ResponseCode.CARD_STATUS_UPDATE_ERROR);
                 response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_STATUS_UPDATE_ERROR));
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                return response;
+            }
+            if ("002".equals(status) || "WARM".equalsIgnoreCase(status)) {
+                response.setResponseCode(ResponseCode.CARD_TEMPORARILY_BLOCKED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_TEMPORARILY_BLOCKED));
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
                 return response;
             }
         }
@@ -759,6 +1115,7 @@ public class CardService {
         if (card.getExpiryDate() != null && card.getExpiryDate().isBefore(LocalDateTime.now())) {
             response.setResponseCode(ResponseCode.CARD_EXPIRED);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_EXPIRED));
+            recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
             return response;
         }
 
@@ -767,34 +1124,66 @@ public class CardService {
                 && !expiryMatches(card.getExpiryDate(), request.getExpiryDate().trim())) {
             response.setResponseCode(ResponseCode.CARD_EXPIRED);
             response.setResponseMessage("Expiry date does not match card");
+            recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
             return response;
         }
 
-        if (request.getPin() == null || request.getPin().isBlank()) {
-            response.setResponseCode(ResponseCode.PIN_REQUIRED);
-            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_REQUIRED));
-            return response;
+        boolean virtual = isVirtualCard(card);
+        boolean hasPinBlock = request.getPinBlock() != null && !request.getPinBlock().isBlank();
+        boolean hasAesPin = request.getPin() != null && !request.getPin().isBlank();
+        if (!virtual) {
+            if (!hasPinBlock && !hasAesPin) {
+                response.setResponseCode(ResponseCode.PIN_REQUIRED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_REQUIRED));
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                return response;
+            }
+            if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
+                response.setResponseCode(ResponseCode.NO_DATA);
+                response.setResponseMessage("PIN not set on card");
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                return response;
+            }
+            if (isPinLocked(card)) {
+                response.setResponseCode(ResponseCode.PIN_LOCKED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.PIN_LOCKED));
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                return response;
+            }
+            if (hasPinBlock) {
+                if (!pinBlockService.isReady()) {
+                    response.setResponseCode(ResponseCode.FAILURE);
+                    response.setResponseMessage("PIN block verification is not configured");
+                    recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                    return response;
+                }
+                String clearPanForPin = decryptPan(card);
+                if (clearPanForPin == null) {
+                    clearPanForPin = pan;
+                }
+                if (!pinBlockService.matches(request.getPinBlock().trim(), clearPanForPin, card.getPinOffset())) {
+                    recordCredentialFailure(card);
+                    response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
+                    response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
+                    recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                    return response;
+                }
+            } else if (!pinsMatchFlexible(card.getPinOffset(), request.getPin())) {
+                recordCredentialFailure(card);
+                response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
+                recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
+                return response;
+            }
+            resetPinRetries(card);
         }
-        if (card.getPinOffset() == null || card.getPinOffset().isBlank()) {
-            response.setResponseCode(ResponseCode.NO_DATA);
-            response.setResponseMessage("PIN not set on card");
-            return response;
-        }
-        if (!pinsMatchFlexible(card.getPinOffset(), request.getPin())) {
-            response.setResponseCode(ResponseCode.CARD_PIN_NOT_MATCHED);
-            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_PIN_NOT_MATCHED));
-            return response;
-        }
+        // Virtual: no CMS PIN — status + daily limit only (API key / JWT already enforced).
 
-        String channelKey = String.valueOf(request.getChannelCode());
-        String tranKey = (request.getTranCode() != null && !request.getTranCode().isBlank())
-                ? request.getTranCode().trim()
-                : channelKey;
-
-        CeilingResult ceiling = resolveAuthorizeCeiling(card, pan, request.getChannelCode(), tranKey);
+        CeilingResult ceiling = resolveAuthorizeCeiling(card, panForLimits, request.getChannelCode(), tranKey);
         if (ceiling.maxLimit == null || ceiling.maxLimit.compareTo(BigDecimal.ZERO) <= 0) {
             response.setResponseCode(ResponseCode.FAILURE);
             response.setResponseMessage("No daily limit configured for this channel");
+            recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
             return response;
         }
 
@@ -802,17 +1191,17 @@ public class CardService {
             response.setResponseCode(ResponseCode.CARD_LIMIT_EXCEED);
             response.setResponseMessage("Amount exceeds customized/max daily limit");
             CardAuthorizeResponse body = buildAuthorizeBody(
-                    pan, channelKey, tranKey, amount, ceiling.maxLimit, ceiling.maxLimit,
+                    panForLimits, channelKey, tranKey, amount, ceiling.maxLimit, ceiling.maxLimit,
                     ceiling.customizedApplied, false);
-            // available unchanged conceptually — still report ceiling as available before reject
             body.setAvailableLimit(null);
             response.setResponseBody(body);
+            recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, null);
             return response;
         }
 
         LocalDate today = LocalDate.now();
         Optional<CardLimitActual> actualOpt =
-                cardLimitActualRepository.findByPanAndChannelCodeAndTranCode(pan, channelKey, tranKey);
+                cardLimitActualRepository.findByPanAndChannelCodeAndTranCode(panForLimits, channelKey, tranKey);
 
         boolean created = false;
         CardLimitActual actual;
@@ -826,13 +1215,12 @@ public class CardService {
                     ? actual.getAvailableLimit()
                     : ceiling.maxLimit;
         } else if (actualOpt.isPresent()) {
-            // Prior day row — reset cycle for today from full ceiling
             actual = actualOpt.get();
             remainingBefore = ceiling.maxLimit;
             actual.setCycleBeginDate(today);
         } else {
             actual = new CardLimitActual();
-            actual.setPan(pan);
+            actual.setPan(panForLimits);
             actual.setChannelCode(channelKey);
             actual.setTranCode(tranKey);
             actual.setCycleBeginDate(today);
@@ -847,9 +1235,10 @@ public class CardService {
             response.setResponseCode(ResponseCode.CARD_LIMIT_EXCEED);
             response.setResponseMessage(ResponseCode.getMessage(ResponseCode.CARD_LIMIT_EXCEED));
             CardAuthorizeResponse body = buildAuthorizeBody(
-                    pan, channelKey, tranKey, amount, ceiling.maxLimit, remainingBefore,
+                    panForLimits, channelKey, tranKey, amount, ceiling.maxLimit, remainingBefore,
                     ceiling.customizedApplied, created);
             response.setResponseBody(body);
+            recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, remainingBefore);
             return response;
         }
 
@@ -865,9 +1254,256 @@ public class CardService {
         response.setResponseCode(ResponseCode.SUCCESS);
         response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
         response.setResponseBody(buildAuthorizeBody(
-                pan, channelKey, tranKey, amount, ceiling.maxLimit, remainingAfter,
+                panForLimits, channelKey, tranKey, amount, ceiling.maxLimit, remainingAfter,
                 ceiling.customizedApplied, created));
+        recordAuthorizeTxn(card, panForLimits, amount, channelKey, tranKey, authRef, response, remainingAfter);
         return response;
+    }
+
+    public ResponseWrapper<CardTransactionHistoryResponse> transactionHistory(CardTransactionHistoryRequest request) {
+        ResponseWrapper<CardTransactionHistoryResponse> response = new ResponseWrapper<>();
+        if (request == null) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("request body is required");
+            return response;
+        }
+
+        String relationshipNum = blankToNull(request.getRelationshipNum());
+        if (relationshipNum == null && AuthContext.relationshipNum() != null) {
+            relationshipNum = AuthContext.relationshipNum();
+        }
+        if (!relationshipAllowed(relationshipNum)) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
+
+        String panFilter = resolveStoredPanFilter(request.getPan());
+        if (request.getPan() != null && !request.getPan().isBlank() && panFilter == null) {
+            response.setResponseCode(ResponseCode.NO_DATA);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
+            return response;
+        }
+        if (panFilter != null) {
+            Optional<Card> byPan = findCardByPanInput(request.getPan().trim());
+            if (byPan.isPresent() && !relationshipAllowed(byPan.get().getRelationshipNum())) {
+                response.setResponseCode(ResponseCode.FORBIDDEN);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+                return response;
+            }
+        }
+        if (relationshipNum == null && panFilter == null) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("relationshipNum or pan is required");
+            return response;
+        }
+
+        LocalDate from;
+        LocalDate to;
+        try {
+            to = parseDateOrDefault(request.getToDate(), LocalDate.now());
+            from = parseDateOrDefault(request.getFromDate(), to.minusDays(30));
+        } catch (DateTimeParseException ex) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("fromDate/toDate must be yyyy-MM-dd");
+            return response;
+        }
+        if (from.isAfter(to)) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("fromDate must be on or before toDate");
+            return response;
+        }
+
+        int page = request.getPage() == null || request.getPage() < 0 ? 0 : request.getPage();
+        int size = request.getSize() == null || request.getSize() < 1 ? 20 : Math.min(request.getSize(), 100);
+        String channel = request.getChannelCode() == null ? null : String.valueOf(request.getChannelCode());
+
+        Page<CardTransaction> result = cardTransactionRepository.search(
+                relationshipNum,
+                panFilter,
+                channel,
+                from.atStartOfDay(),
+                to.plusDays(1).atStartOfDay(),
+                PageRequest.of(page, size));
+
+        CardTransactionHistoryResponse body = new CardTransactionHistoryResponse();
+        body.setPage(page);
+        body.setSize(size);
+        body.setTotalElements(result.getTotalElements());
+        body.setTotalPages(result.getTotalPages());
+        body.setItems(result.getContent().stream().map(this::toTxnItem).toList());
+
+        response.setResponseCode(ResponseCode.SUCCESS);
+        response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
+        response.setResponseBody(body);
+        return response;
+    }
+
+    public ResponseWrapper<CardStatementResponse> statement(CardStatementRequest request) {
+        ResponseWrapper<CardStatementResponse> response = new ResponseWrapper<>();
+        if (request == null) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("request body is required");
+            return response;
+        }
+
+        String relationshipNum = blankToNull(request.getRelationshipNum());
+        if (relationshipNum == null && AuthContext.relationshipNum() != null) {
+            relationshipNum = AuthContext.relationshipNum();
+        }
+        if (!relationshipAllowed(relationshipNum)) {
+            response.setResponseCode(ResponseCode.FORBIDDEN);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+            return response;
+        }
+
+        String panFilter = resolveStoredPanFilter(request.getPan());
+        if (request.getPan() != null && !request.getPan().isBlank() && panFilter == null) {
+            response.setResponseCode(ResponseCode.NO_DATA);
+            response.setResponseMessage(ResponseCode.getMessage(ResponseCode.NO_DATA));
+            return response;
+        }
+        if (panFilter != null) {
+            Optional<Card> byPan = findCardByPanInput(request.getPan().trim());
+            if (byPan.isPresent() && !relationshipAllowed(byPan.get().getRelationshipNum())) {
+                response.setResponseCode(ResponseCode.FORBIDDEN);
+                response.setResponseMessage(ResponseCode.getMessage(ResponseCode.FORBIDDEN));
+                return response;
+            }
+        }
+        if (relationshipNum == null && panFilter == null) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("relationshipNum or pan is required");
+            return response;
+        }
+
+        LocalDate from;
+        LocalDate to;
+        try {
+            if (request.getMonth() != null && !request.getMonth().isBlank()) {
+                YearMonth ym = YearMonth.parse(request.getMonth().trim());
+                from = ym.atDay(1);
+                to = ym.atEndOfMonth();
+            } else {
+                to = parseDateOrDefault(request.getToDate(), LocalDate.now());
+                from = parseDateOrDefault(request.getFromDate(), to.withDayOfMonth(1));
+            }
+        } catch (DateTimeParseException ex) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("month must be yyyy-MM; dates must be yyyy-MM-dd");
+            return response;
+        }
+        if (from.isAfter(to)) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("fromDate must be on or before toDate");
+            return response;
+        }
+
+        String channel = request.getChannelCode() == null ? null : String.valueOf(request.getChannelCode());
+        List<CardTransaction> rows = cardTransactionRepository.searchList(
+                relationshipNum,
+                panFilter,
+                channel,
+                from.atStartOfDay(),
+                to.plusDays(1).atStartOfDay());
+
+        long approvedCount = 0;
+        long declinedCount = 0;
+        BigDecimal totalApproved = BigDecimal.ZERO;
+        Map<String, BigDecimal> byChannel = new LinkedHashMap<>();
+        List<CardTransactionItemResponse> items = new ArrayList<>();
+        for (CardTransaction t : rows) {
+            items.add(toTxnItem(t));
+            boolean ok = t.getResponseCode() != null && t.getResponseCode() == ResponseCode.SUCCESS;
+            if (ok) {
+                approvedCount++;
+                BigDecimal amt = t.getAmount() != null ? t.getAmount() : BigDecimal.ZERO;
+                totalApproved = totalApproved.add(amt);
+                String ch = t.getChannelCode() != null ? t.getChannelCode() : "?";
+                byChannel.merge(ch, amt, BigDecimal::add);
+            } else {
+                declinedCount++;
+            }
+        }
+
+        CardStatementResponse body = new CardStatementResponse();
+        body.setFromDate(from.toString());
+        body.setToDate(to.toString());
+        body.setRelationshipNum(relationshipNum);
+        body.setPan(panFilter);
+        body.setTotalCount(rows.size());
+        body.setApprovedCount(approvedCount);
+        body.setDeclinedCount(declinedCount);
+        body.setTotalApprovedAmount(totalApproved);
+        body.setApprovedAmountByChannel(byChannel);
+        body.setTransactions(items);
+
+        response.setResponseCode(ResponseCode.SUCCESS);
+        response.setResponseMessage(ResponseCode.getMessage(ResponseCode.SUCCESS));
+        response.setResponseBody(body);
+        return response;
+    }
+
+    private void recordAuthorizeTxn(
+            Card card,
+            String panForLimits,
+            BigDecimal amount,
+            String channelKey,
+            String tranKey,
+            String authRef,
+            ResponseWrapper<?> outcome,
+            BigDecimal availableAfter) {
+        try {
+            CardTransaction txn = new CardTransaction();
+            txn.setPan(panForLimits);
+            txn.setPanHash(card.getPanHash());
+            txn.setRelationshipNum(card.getRelationshipNum());
+            txn.setAmount(amount);
+            txn.setChannelCode(channelKey);
+            txn.setTranCode(tranKey);
+            txn.setResponseCode(outcome.getResponseCode());
+            txn.setResponseMessage(outcome.getResponseMessage());
+            txn.setAvailableAfter(availableAfter);
+            txn.setAuthRef(authRef);
+            txn.setCreatedOn(LocalDateTime.now());
+            txn.setCreatedBy("API_APP");
+            cardTransactionRepository.save(txn);
+        } catch (RuntimeException ex) {
+            // Do not fail authorize if journal insert has a problem
+        }
+    }
+
+    private CardTransactionItemResponse toTxnItem(CardTransaction t) {
+        CardTransactionItemResponse item = new CardTransactionItemResponse();
+        item.setId(t.getId());
+        item.setPan(t.getPan());
+        item.setRelationshipNum(t.getRelationshipNum());
+        item.setAmount(t.getAmount());
+        item.setChannelCode(t.getChannelCode());
+        item.setTranCode(t.getTranCode());
+        item.setResponseCode(t.getResponseCode());
+        item.setResponseMessage(t.getResponseMessage());
+        item.setAvailableAfter(t.getAvailableAfter());
+        item.setAuthRef(t.getAuthRef());
+        item.setCreatedOn(t.getCreatedOn());
+        item.setApproved(t.getResponseCode() != null && t.getResponseCode() == ResponseCode.SUCCESS);
+        return item;
+    }
+
+    private String resolveStoredPanFilter(String panInput) {
+        if (panInput == null || panInput.isBlank()) {
+            return null;
+        }
+        return findCardByPanInput(panInput.trim())
+                .map(c -> c.getPan() != null && !c.getPan().isBlank() ? c.getPan().trim() : panInput.trim())
+                .orElse(null);
+    }
+
+    private static LocalDate parseDateOrDefault(String raw, LocalDate fallback) {
+        if (raw == null || raw.isBlank()) {
+            return fallback;
+        }
+        return LocalDate.parse(raw.trim());
     }
 
     private static final class CeilingResult {
@@ -984,8 +1620,14 @@ public class CardService {
         return cardExpiry.getMonthValue() == mm && cardExpiry.getYear() == yy;
     }
 
-    private ResponseWrapper<CardLimitValidateResponse> resolveLimit(String pan, Long channelCode, String amountStr, boolean consumeCheck) {
+    private ResponseWrapper<CardLimitValidateResponse> resolveLimit(
+            String pan, Long channelCode, Long tranCode, String amountStr, boolean consumeCheck) {
         ResponseWrapper<CardLimitValidateResponse> response = new ResponseWrapper<>();
+        if (!isKnownChannelCode(channelCode)) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage(CHANNEL_CODE_REQUIRED_MESSAGE);
+            return response;
+        }
         Optional<Card> cardOpt = cardRepository.findByPan(pan);
         if (cardOpt.isEmpty()) {
             response.setResponseCode(ResponseCode.NO_DATA);
@@ -994,61 +1636,19 @@ public class CardService {
         }
         Card card = cardOpt.get();
 
-        BigDecimal max = BigDecimal.ZERO;
-        BigDecimal available = null;
+        String channelKey = String.valueOf(channelCode);
+        String tranKey = tranCode != null ? String.valueOf(tranCode) : channelKey;
 
-        String channelKey = channelCode == null ? null : String.valueOf(channelCode);
+        // Same CARD_LIMIT_ACTUAL row authorize writes: PAN + channel + tran (tran defaults to channel).
+        BigDecimal actualAvail = findTodayActualAvailable(pan, channelCode, tranKey, true);
+        CeilingResult ceiling = resolveAuthorizeCeiling(card, pan, channelCode, tranKey);
+        BigDecimal max = ceiling.maxLimit != null ? ceiling.maxLimit : BigDecimal.ZERO;
+        BigDecimal available = actualAvail != null ? actualAvail : max;
 
-        // 1) Prefer same-day CARD_LIMIT_ACTUAL written by /transaction/authorize (channel/tran = 1|2|3)
-        BigDecimal actualAvail = findTodayActualAvailable(pan, channelCode, channelKey);
-        if (actualAvail != null) {
-            available = actualAvail;
-        }
-
-        // 2) Max (+ legacy available) from spending summary / CARD_LIMIT_PROFILE
-        List<Object[]> rows = cardSpendingSummaryRepository.findSpendingSummary(pan, channelKey, null);
-        if (rows != null && !rows.isEmpty()) {
-            Object[] row = rows.get(0);
-            Double maxVal = asDouble(row[5]);
-            Double dailyAvail = asDouble(row[7]);
-            if (maxVal != null) {
-                max = BigDecimal.valueOf(maxVal);
-            }
-            // Only use summary available if we did not already get actual
-            if (available == null && dailyAvail != null) {
-                available = BigDecimal.valueOf(dailyAvail);
-            }
-        }
-
-        // 3) Fallback to LIMIT_PROFILE daily channel caps
-        if (available == null || max.compareTo(BigDecimal.ZERO) == 0) {
-            Long profileId = card.getLimitProfileId() != null ? card.getLimitProfileId() : card.getLimitProfile();
-            if (profileId == null && available == null) {
-                response.setResponseCode(ResponseCode.FAILURE);
-                response.setResponseMessage("No limit profile on card");
-                return response;
-            }
-            if (profileId != null) {
-                Optional<LimitProfile> profileOpt = limitProfileRepository.findById(profileId);
-                if (profileOpt.isEmpty() && available == null) {
-                    response.setResponseCode(ResponseCode.FAILURE);
-                    response.setResponseMessage("Limit profile not found");
-                    return response;
-                }
-                if (profileOpt.isPresent()) {
-                    BigDecimal profileMax = pickChannelLimit(profileOpt.get(), channelCode);
-                    if (max.compareTo(BigDecimal.ZERO) == 0) {
-                        max = profileMax != null ? profileMax : BigDecimal.ZERO;
-                    }
-                    if (available == null) {
-                        available = max;
-                    }
-                }
-            }
-        }
-
-        if (available == null) {
-            available = max;
+        if (max.compareTo(BigDecimal.ZERO) <= 0 && available.compareTo(BigDecimal.ZERO) <= 0) {
+            response.setResponseCode(ResponseCode.FAILURE);
+            response.setResponseMessage("No daily limit configured for this channel");
+            return response;
         }
 
         if (consumeCheck && amountStr != null && !amountStr.isBlank()) {
@@ -1078,8 +1678,9 @@ public class CardService {
     /**
      * Read today's remaining from CARD_LIMIT_ACTUAL.
      * Matches authorize keys: CHANNEL_CODE + TRAN_CODE (tran defaults to channel).
+     * exactOnly skips the channel-wide fallback so another tran type cannot satisfy this check.
      */
-    private BigDecimal findTodayActualAvailable(String pan, Long channelCode, String tranCode) {
+    private BigDecimal findTodayActualAvailable(String pan, Long channelCode, String tranCode, boolean exactOnly) {
         if (pan == null || pan.isBlank() || channelCode == null) {
             return null;
         }
@@ -1092,8 +1693,10 @@ public class CardService {
         if (exact.isPresent() && isSameDayCycle(exact.get(), today)) {
             return exact.get().getAvailableLimit();
         }
+        if (exactOnly) {
+            return null;
+        }
 
-        // Any same-day row for this channel (if profile used a different TRAN_CODE historically)
         List<CardLimitActual> byChannel =
                 cardLimitActualRepository.findByPanAndChannelCode(pan.trim(), channelKey);
         for (CardLimitActual row : byChannel) {
@@ -1108,20 +1711,27 @@ public class CardService {
         return row != null && row.getCycleBeginDate() != null && row.getCycleBeginDate().equals(today);
     }
 
-    /** Simple channel mapping: 1=ATM, 2=POS, else ecommerce daily. */
+    private static final String CHANNEL_CODE_REQUIRED_MESSAGE =
+            "channelCode must be 1 (ATM), 2 (POS), or 3 (e-commerce)";
+
+    private static boolean isKnownChannelCode(Long channelCode) {
+        return channelCode != null && channelCode >= 1L && channelCode <= 3L;
+    }
+
+    /** Channel mapping: 1=ATM, 2=POS, 3=e-commerce. No fallback between channels. */
     private BigDecimal pickChannelLimit(LimitProfile profile, Long channelCode) {
-        if (channelCode != null && channelCode == 1L) {
+        if (channelCode == null) {
+            return null;
+        }
+        if (channelCode == 1L) {
             return profile.getAtmDailyAmount();
         }
-        if (channelCode != null && channelCode == 2L) {
+        if (channelCode == 2L) {
             return profile.getPosDailyAmount();
         }
-        if (profile.getEcommerceDailyAmount() != null) {
+        if (channelCode == 3L) {
             return profile.getEcommerceDailyAmount();
         }
-        if (profile.getPosDailyAmount() != null) {
-            return profile.getPosDailyAmount();
-        }
-        return profile.getAtmDailyAmount();
+        return null;
     }
 }

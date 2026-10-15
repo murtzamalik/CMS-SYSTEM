@@ -26,6 +26,20 @@ public final class ResponseCode {
     public static final int PIN_ALREADY_SET = 21;
     public static final int INVALID_AMOUNT = 22;
     public static final int PIN_REQUIRED = 23;
+    /** HTTP-aligned: missing/invalid credentials. */
+    public static final int UNAUTHORIZED = 401;
+    /** Authenticated but not allowed to act on this card/relationship. */
+    public static final int FORBIDDEN = 403;
+    /** Card is temporarily blocked (Warm). */
+    public static final int CARD_TEMPORARILY_BLOCKED = 25;
+    /** PIN APIs are not used for virtual (app-only) cards. */
+    public static final int PIN_NOT_APPLICABLE_VIRTUAL = 26;
+    /** Forgot-PIN (flag=F) missing otpProof after LasPay OTP. */
+    public static final int OTP_PROOF_REQUIRED = 27;
+    /** Forgot-PIN otpProof invalid, expired, or mismatched. */
+    public static final int OTP_PROOF_INVALID = 28;
+    /** PIN locked after too many failed PIN/CVV/track2 attempts (VCR-007). */
+    public static final int PIN_LOCKED = 29;
 
     private static final Map<Integer, String> MESSAGE = new HashMap<>();
 
@@ -51,6 +65,13 @@ public final class ResponseCode {
         MESSAGE.put(PIN_ALREADY_SET, "PIN already set. Use Change PIN or Forgot PIN");
         MESSAGE.put(INVALID_AMOUNT, "Invalid transaction amount");
         MESSAGE.put(PIN_REQUIRED, "PIN is required");
+        MESSAGE.put(UNAUTHORIZED, "Unauthorized");
+        MESSAGE.put(FORBIDDEN, "Forbidden: relationship does not match token");
+        MESSAGE.put(CARD_TEMPORARILY_BLOCKED, "Card is temporarily blocked");
+        MESSAGE.put(PIN_NOT_APPLICABLE_VIRTUAL, "PIN is not applicable for virtual cards");
+        MESSAGE.put(OTP_PROOF_REQUIRED, "otpProof is required for forgot-PIN after LasPay OTP");
+        MESSAGE.put(OTP_PROOF_INVALID, "otpProof is invalid or expired");
+        MESSAGE.put(PIN_LOCKED, "PIN is locked after too many failed attempts. Use Forgot PIN.");
     }
 
     private ResponseCode() {

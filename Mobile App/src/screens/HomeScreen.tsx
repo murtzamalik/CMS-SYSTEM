@@ -19,7 +19,7 @@ export function HomeScreen() {
   const navigate = useNavigate();
   const session = getSession();
   const [rel, setRel] = useState(session?.relationshipNum || '');
-  const [card, setCard] = useState<CardInquiryResponse | null>(null);
+  const [cards, setCards] = useState<CardInquiryResponse[]>([]);
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
@@ -30,7 +30,7 @@ export function HomeScreen() {
     setError('');
     setMessage('');
     setPending(false);
-    setCard(null);
+    setCards([]);
     try {
       const result = await cardInquiry(relationshipNum);
       if (result.code === 13) {
@@ -40,17 +40,21 @@ export function HomeScreen() {
       } else if (result.code === 3) {
         setMessage(result.message || 'No card found for this relationship.');
         saveCardContext(null);
-      } else if (result.card) {
-        const pinSet = resolvePinSet(result.card.pan, result.card.pinSet);
-        if (pinSet) {
-          markPinSet(result.card.pan);
-        }
-        setCard({ ...result.card, pinSet });
+      } else if (result.cards.length > 0) {
+        const loaded = result.cards.map((item) => {
+          const pinSet = resolvePinSet(item.pan, item.pinSet);
+          if (pinSet) {
+            markPinSet(item.pan);
+          }
+          return { ...item, pinSet };
+        });
+        setCards(loaded);
+        const first = loaded[0];
         saveCardContext({
-          pan: result.card.pan,
+          pan: first.pan,
           relationshipNum,
-          cardTitle: result.card.cardTitle,
-          pinSet,
+          cardTitle: first.cardTitle,
+          pinSet: Boolean(first.pinSet),
         });
       }
     } catch (err) {
@@ -92,10 +96,16 @@ export function HomeScreen() {
         </button>
       }
     >
-      <PlasticCard card={card} pending={pending} emptyMessage={message} />
+      {cards.length === 0 ? (
+        <PlasticCard pending={pending} emptyMessage={message} />
+      ) : (
+        cards.map((item) => (
+          <PlasticCard key={item.pan || item.cardTypeCode} card={item} />
+        ))
+      )}
 
       {error ? <Banner kind="error">{error}</Banner> : null}
-      {!error && message && !pending && !card ? (
+      {!error && message && !pending && cards.length === 0 ? (
         <Banner kind="info">{message}</Banner>
       ) : null}
 
@@ -118,39 +128,69 @@ export function HomeScreen() {
         </label>
       </section>
 
-      {card ? (
-        <section className="panel details">
-          <h3>Card details</h3>
+      {cards.map((item) => (
+        <section className="panel details" key={`details-${item.pan || item.cardTypeCode}`}>
+          <h3>{item.cardTypeName || item.cardTypeCode || 'Card'} details</h3>
           <dl>
             <div>
               <dt>PAN</dt>
-              <dd>{maskPan(card.pan)}</dd>
+              <dd>{maskPan(item.pan)}</dd>
             </div>
             <div>
               <dt>Status</dt>
               <dd>
-                <span className="status-chip">{card.cardStatusCode || '—'}</span>
+                <span className="status-chip">{item.cardStatusCode || '—'}</span>
               </dd>
             </div>
             <div>
               <dt>PIN</dt>
-              <dd>{resolvePinSet(card.pan, card.pinSet) ? 'Set' : 'Not set'}</dd>
+              <dd>{resolvePinSet(item.pan, item.pinSet) ? 'Set' : 'Not set'}</dd>
             </div>
             <div>
               <dt>Production</dt>
-              <dd>{card.cardProdStatus || '—'}</dd>
+              <dd>{item.cardProdStatus || '—'}</dd>
             </div>
             <div>
               <dt>Expiry</dt>
-              <dd>{formatExpiryMonthYear(card.expiryDate)}</dd>
+              <dd>{formatExpiryMonthYear(item.expiryDate)}</dd>
             </div>
             <div>
               <dt>Type</dt>
-              <dd>{card.cardTypeName || '—'}</dd>
+              <dd>{item.cardTypeName || item.cardTypeCode || '—'}</dd>
             </div>
           </dl>
+          <div className="action-grid">
+            <SecondaryButton
+              type="button"
+              onClick={() => {
+                saveCardContext({
+                  pan: item.pan,
+                  relationshipNum: rel.trim(),
+                  cardTitle: item.cardTitle,
+                  pinSet: Boolean(item.pinSet),
+                });
+                navigate('/pin');
+              }}
+            >
+              Manage PIN
+            </SecondaryButton>
+            <SecondaryButton
+              type="button"
+              onClick={() => {
+                saveCardContext({
+                  pan: item.pan,
+                  relationshipNum: rel.trim(),
+                  cardTitle: item.cardTitle,
+                  pinSet: Boolean(item.pinSet),
+                });
+                navigate('/status');
+              }}
+            >
+              Change status
+            </SecondaryButton>
+          </div>
         </section>
-      ) : null}
+      ))}
 
       <div className="action-grid">
         <PrimaryButton type="button" onClick={() => navigate('/request')}>
@@ -160,16 +200,6 @@ export function HomeScreen() {
           View limits
         </SecondaryButton>
       </div>
-      {card ? (
-        <div className="action-grid">
-          <SecondaryButton type="button" onClick={() => navigate('/pin')}>
-            Manage PIN
-          </SecondaryButton>
-          <SecondaryButton type="button" onClick={() => navigate('/status')}>
-            Change status
-          </SecondaryButton>
-        </div>
-      ) : null}
     </PageShell>
   );
 }

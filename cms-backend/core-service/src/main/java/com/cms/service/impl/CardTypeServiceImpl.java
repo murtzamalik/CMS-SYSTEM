@@ -156,6 +156,7 @@ public class CardTypeServiceImpl implements CardTypeService {
         }
         if (request.getCardTypeName() != null) e.setCardTypeName(request.getCardTypeName());
         if (request.getIsActive() != null) e.setIsActive(Boolean.TRUE.equals(request.getIsActive()) ? 1 : 0);
+        if (request.getIsVirtual() != null) e.setIsVirtual(Boolean.TRUE.equals(request.getIsVirtual()) ? 1 : 0);
         if (request.getSupplementaryAllowed() != null) e.setSupplementaryAllowed(request.getSupplementaryAllowed());
         if (request.getIsSuppType() != null) e.setIsSuppType(request.getIsSuppType());
         if (request.getSuppTypeCode() != null) e.setSuppTypeCode(request.getSuppTypeCode());

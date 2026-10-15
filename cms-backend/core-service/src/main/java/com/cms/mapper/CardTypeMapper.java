@@ -20,6 +20,7 @@ public class CardTypeMapper {
         r.setProductId(e.getProductId());
         r.setProductCode(e.getProductCode());
         r.setIsActive(e.getIsActive() != null && e.getIsActive() == 1);
+        r.setIsVirtual(e.getIsVirtual() != null && e.getIsVirtual() == 1);
         r.setSupplementaryAllowed(e.getSupplementaryAllowed());
         r.setIsSuppType(e.getIsSuppType());
         r.setSuppTypeCode(e.getSuppTypeCode());
@@ -47,7 +48,8 @@ public class CardTypeMapper {
         e.setCardTypeCode(req.getCardTypeCode());
         e.setCardTypeName(req.getCardTypeName());
         e.setProductCode(req.getProductCode());
-        e.setIsActive(Boolean.TRUE.equals(req.getIsActive()) ? 1 : 0);
+        e.setIsActive(req.getIsActive() == null || Boolean.TRUE.equals(req.getIsActive()) ? 1 : 0);
+        e.setIsVirtual(Boolean.TRUE.equals(req.getIsVirtual()) ? 1 : 0);
         e.setSupplementaryAllowed(req.getSupplementaryAllowed());
         e.setIsSuppType(req.getIsSuppType());
         e.setSuppTypeCode(req.getSuppTypeCode());

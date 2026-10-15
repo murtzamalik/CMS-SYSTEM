@@ -69,6 +69,7 @@ const configs: Record<string, RefDataConfig> = {
       { field: 'cardTypeName', header: 'Card Type Name' },
       { field: 'productCode', header: 'Product Code' },
       { field: 'defaultLimitProfileCode', header: 'Default Limit Profile' },
+      { field: 'isVirtual', header: 'Virtual' },
       { field: 'isActive', header: 'Active' },
     ],
     formFields: [
@@ -92,6 +93,7 @@ const configs: Record<string, RefDataConfig> = {
         optionValueField: 'id',
         optionLabelField: 'profileName',
       },
+      { name: 'isVirtual', label: 'Virtual (app-only, no PIN, no print)', type: 'checkbox' },
       { name: 'isActive', label: 'Active', type: 'checkbox' },
     ],
   },
